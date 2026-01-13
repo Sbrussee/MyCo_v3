@@ -1,0 +1,45 @@
+[project]
+name = "myco-v3"
+version = "0.1.0"
+description = "MoCo v3 training for nuclei crops with probe evaluation."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "MyCo Contributors"}]
+
+dependencies = [
+    "numpy>=1.23",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "pytorch-lightning>=2.1",
+    "timm>=0.9",
+    "pillow>=10.0",
+    "scikit-learn>=1.3",
+    "umap-learn>=0.5",
+    "matplotlib>=3.7",
+    "openslide-python>=1.3",
+    "lxml>=4.9",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+metrics = ["pandas>=2.0"]
+
+test = ["pytest>=7.4"]
+
+[project.scripts]
+myco-train = "train_model:main"
+myco-infer = "myco.inference:main"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
