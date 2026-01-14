@@ -98,13 +98,42 @@ def parse_xml_centroids(path: str) -> List[Tuple[float, float]]:
 
 
 def load_centroids(path: str) -> List[Tuple[float, float]]:
-    """Load centroids from XML or GeoJSON annotations."""
+    """Load centroids from XML or GeoJSON annotations with on-disk caching."""
+    cache_path = _centroid_cache_path(path)
+    if cache_path.exists():
+        return _read_centroid_cache(cache_path)
+
     lower = path.lower()
     if lower.endswith(".geojson") or lower.endswith(".json"):
-        return parse_geojson_centroids(path)
-    if lower.endswith(".xml"):
-        return parse_xml_centroids(path)
-    raise ValueError(f"Unsupported annotation format: {path}")
+        centroids = parse_geojson_centroids(path)
+    elif lower.endswith(".xml"):
+        centroids = parse_xml_centroids(path)
+    else:
+        raise ValueError(f"Unsupported annotation format: {path}")
+
+    _write_centroid_cache(cache_path, centroids)
+    return centroids
+
+
+def _centroid_cache_path(path: str) -> Path:
+    """Return the cache path used to store serialized centroids for an annotation."""
+    ann_path = Path(path)
+    return ann_path.with_suffix(ann_path.suffix + ".centroids.json")
+
+
+def _read_centroid_cache(path: Path) -> List[Tuple[float, float]]:
+    """Read cached centroid coordinates from disk."""
+    with open(path, "r", encoding="utf-8") as handle:
+        cached = json.load(handle)
+    return [(float(item[0]), float(item[1])) for item in cached]
+
+
+def _write_centroid_cache(path: Path, centroids: List[Tuple[float, float]]) -> None:
+    """Persist centroid coordinates to disk for future reuse."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [[float(x), float(y)] for x, y in centroids]
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
 
 
 def safe_open_slide(wsi_path: str):

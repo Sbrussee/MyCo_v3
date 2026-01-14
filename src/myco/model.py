@@ -1,4 +1,8 @@
-"""Model definition for MoCo v3 training on nuclei crops."""
+"""Model definition for MoCo v3 training on nuclei crops.
+
+Schedules follow the official MoCo v3 reference implementation:
+https://github.com/facebookresearch/moco-v3
+"""
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -51,6 +55,8 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
         mlp_hidden: int,
         base_m: float,
         epochs: int,
+        steps_per_epoch: int,
+        warmup_epochs: int,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["init_ckpt"])
@@ -58,6 +64,9 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
         self.temperature = temperature
         self.base_m = base_m
         self.total_epochs = epochs
+        self.steps_per_epoch = max(1, steps_per_epoch)
+        self.warmup_epochs = max(0, warmup_epochs)
+        self.total_steps = self.steps_per_epoch * self.total_epochs
 
         self.q_enc = timm.create_model("vit_small_patch8_224", pretrained=False, num_classes=0, global_pool="avg")
         dim = self.q_enc.num_features
@@ -93,13 +102,44 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
     def configure_optimizers(self):
         return torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
 
-    def _momentum_schedule(self) -> float:
-        progress = self.current_epoch / max(1, (self.total_epochs - 1))
+    def _lr_schedule(self, epoch_progress: float) -> float:
+        """Cosine learning-rate schedule with linear warmup (MoCo v3)."""
+        if self.total_epochs <= 1:
+            return 1.0
+        if self.warmup_epochs > 0 and epoch_progress < self.warmup_epochs:
+            return epoch_progress / float(self.warmup_epochs)
+        cosine_progress = epoch_progress - self.warmup_epochs
+        cosine_total = max(1e-12, float(self.total_epochs - self.warmup_epochs))
+        return 0.5 * (1.0 + math.cos(math.pi * cosine_progress / cosine_total))
+
+    def _momentum_schedule(self, epoch_progress: float) -> float:
+        """Cosine momentum schedule aligned with the MoCo v3 reference implementation."""
+        if self.total_epochs <= 1:
+            return self.base_m
+        progress = epoch_progress / float(self.total_epochs)
         return 1.0 - (1.0 - self.base_m) * (0.5 * (1.0 + math.cos(math.pi * progress)))
+
+    def _epoch_progress(self, batch_idx: int) -> float:
+        """Return the fractional epoch progress for a batch index."""
+        return float(self.current_epoch) + (float(batch_idx) / float(self.steps_per_epoch))
+
+    def _update_learning_rate(self, batch_idx: int) -> None:
+        """Update optimizer learning rates to match the MoCo v3 schedule."""
+        optimizer = self.optimizers()
+        if optimizer is None:
+            return
+        if isinstance(optimizer, (list, tuple)):
+            if not optimizer:
+                return
+            optimizer = optimizer[0]
+        lr_scale = self._lr_schedule(self._epoch_progress(batch_idx))
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = self.hparams.lr * lr_scale
 
     def training_step(self, batch, batch_idx):
         x1, x2 = batch
-        momentum = self._momentum_schedule()
+        self._update_learning_rate(batch_idx)
+        momentum = self._momentum_schedule(self._epoch_progress(batch_idx))
         with torch.no_grad():
             self._momentum_update(momentum)
 
