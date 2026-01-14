@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import math
 from pathlib import Path
 
 import pytorch_lightning as pl
@@ -44,6 +45,12 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--weight_decay", type=float, default=0.05)
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--m", type=float, default=0.99)
+    parser.add_argument(
+        "--warmup_epochs",
+        type=int,
+        default=10,
+        help="Linear warmup epochs for the MoCo v3 cosine learning-rate schedule.",
+    )
 
     parser.add_argument("--proj_dim", type=int, default=256)
     parser.add_argument("--mlp_hidden", type=int, default=2048)
@@ -81,6 +88,9 @@ def main() -> None:
         seed=args.seed,
     )
 
+    world_size = max(1, args.devices)
+    steps_per_epoch = math.ceil(args.epoch_length / (args.batch_size * world_size))
+
     model = MoCoV3Lit(
         init_ckpt=args.init_ckpt,
         lr=args.lr,
@@ -90,6 +100,8 @@ def main() -> None:
         mlp_hidden=args.mlp_hidden,
         base_m=args.m,
         epochs=args.epochs,
+        steps_per_epoch=steps_per_epoch,
+        warmup_epochs=args.warmup_epochs,
     )
 
     checkpoint_cb = ModelCheckpoint(
