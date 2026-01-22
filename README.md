@@ -42,6 +42,24 @@ myco-train \
   --outdir /path/to/output
 ```
 
+### Train on Slurm (sbatch)
+
+Use the provided sbatch script to capture **progress**, **metrics**, and **performance**
+logs during SSL training. The script writes:
+
+- `OUTDIR/logs/*/metrics.csv` via the PyTorch Lightning CSV logger.
+- `OUTDIR/train_<jobid>.log` with stdout progress + evaluation metrics.
+- `OUTDIR/moco-*.ckpt` and `OUTDIR/last.ckpt` checkpoints.
+
+```bash
+export WSI_DIR=/path/to/wsis
+export ANN_DIR=/path/to/annotations
+export SLIDE_LABELS=/path/to/slide_labels.csv
+export OUTDIR=/path/to/output
+
+sbatch scripts/train_myco.sbatch
+```
+
 ### Inference
 
 ```bash
@@ -67,6 +85,18 @@ labels.csv
 ```
 
 `labels.csv` must include `slide_id` and `label` columns, where labels are `BID` or `MF` (or 0/1).
+
+## Required inputs (format)
+
+These inputs are required for both `myco-train` and `scripts/train_myco.sbatch`:
+
+- **WSI directory (`--wsi_dir` / `WSI_DIR`)**: contains WSI files like `slide_001.svs`.
+- **Annotation directory (`--ann_dir` / `ANN_DIR`)**: contains one `.xml` or `.geojson`
+  per slide, with filenames matching the WSI slide IDs (e.g., `slide_001.xml`).
+- **Slide labels CSV (`--slide_labels` / `SLIDE_LABELS`)**: CSV with columns
+  `slide_id,label`, where labels are `BID`/`MF` or `0`/`1`.
+- **Output directory (`--outdir` / `OUTDIR`)**: destination for checkpoints, metrics,
+  mosaics, and logs.
 
 ## Training details
 

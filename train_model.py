@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import DeviceStatsMonitor, LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.strategies import DDPStrategy
 
 ROOT = Path(__file__).resolve().parent
@@ -72,6 +73,25 @@ def build_argparser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_logger(outdir: str) -> CSVLogger:
+    """Create a CSV logger for metrics and performance logging."""
+    return CSVLogger(save_dir=outdir, name="logs")
+
+
+def build_callbacks(outdir: str, eval_cb: pl.Callback) -> list[pl.Callback]:
+    """Create training callbacks for checkpointing, metrics, and device stats."""
+    checkpoint_cb = ModelCheckpoint(
+        dirpath=outdir,
+        filename="moco-{epoch:03d}",
+        save_top_k=-1,
+        every_n_epochs=1,
+        save_last=True,
+    )
+    lr_monitor = LearningRateMonitor(logging_interval="step")
+    device_monitor = DeviceStatsMonitor()
+    return [checkpoint_cb, eval_cb, lr_monitor, device_monitor]
+
+
 def main() -> None:
     args = build_argparser().parse_args()
     os.makedirs(args.outdir, exist_ok=True)
@@ -104,13 +124,7 @@ def main() -> None:
         warmup_epochs=args.warmup_epochs,
     )
 
-    checkpoint_cb = ModelCheckpoint(
-        dirpath=args.outdir,
-        filename="moco-{epoch:03d}",
-        save_top_k=-1,
-        every_n_epochs=1,
-        save_last=True,
-    )
+    logger = build_logger(args.outdir)
 
     probe_cfg = ProbeConfig(
         cells_per_slide=args.probe_cells_per_slide,
@@ -142,9 +156,10 @@ def main() -> None:
         strategy=DDPStrategy(find_unused_parameters=False) if args.devices > 1 else "auto",
         precision=args.precision,
         accumulate_grad_batches=args.accum,
-        callbacks=[checkpoint_cb, eval_cb],
+        callbacks=build_callbacks(args.outdir, eval_cb),
         log_every_n_steps=50,
         enable_checkpointing=True,
+        logger=logger,
     )
 
     trainer.fit(model, datamodule)
