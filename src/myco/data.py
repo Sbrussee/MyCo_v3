@@ -37,7 +37,12 @@ class SlideEntry:
 
 
 def read_slide_labels(path: str) -> Dict[str, int]:
-    """Read slide labels from CSV/JSON into a slide_id -> {0,1} mapping."""
+    """Read slide labels from CSV/JSON into a slide_id -> {0,1} mapping.
+
+    Expected CSV columns:
+      - slide_id or slide (string identifier)
+      - label (string/int that maps to a binary label)
+    """
     if path.lower().endswith(".json"):
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -52,9 +57,21 @@ def read_slide_labels(path: str) -> Dict[str, int]:
     output: Dict[str, int] = {}
     with open(path, "r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
+        fieldnames = [name.strip() for name in (reader.fieldnames or [])]
+        assert fieldnames, "CSV must include headers."
+        field_map = {name.lower(): name for name in fieldnames}
+        slide_key = field_map.get("slide_id") or field_map.get("slide")
+        assert slide_key is not None, "CSV must contain a 'slide_id' or 'slide' column."
+        label_key = field_map.get("label")
+        assert label_key is not None, "CSV must contain a 'label' column."
         for row in reader:
-            slide_id = row["slide_id"]
-            label = row["label"].strip().upper()
+            slide_id_raw = row.get(slide_key)
+            assert slide_id_raw is not None, "Slide identifier is missing in CSV row."
+            slide_id = slide_id_raw.strip()
+            assert slide_id, "Slide identifier must be non-empty."
+            label_raw = row.get(label_key)
+            assert label_raw is not None, "Label is missing in CSV row."
+            label = label_raw.strip().upper()
             if label in ["MF", "1", "TRUE", "T"]:
                 output[slide_id] = 1
             elif label in ["BID", "0", "FALSE", "F"]:

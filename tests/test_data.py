@@ -12,6 +12,13 @@ def test_read_slide_labels_csv(tmp_path: Path) -> None:
     assert labels == {"slide_1": 1, "slide_2": 0}
 
 
+def test_read_slide_labels_csv_slide_column(tmp_path: Path) -> None:
+    csv_path = tmp_path / "labels.csv"
+    csv_path.write_text("slide,label\nslide_a,1\nslide_b,0\n")
+    labels = read_slide_labels(str(csv_path))
+    assert labels == {"slide_a": 1, "slide_b": 0}
+
+
 def test_read_slide_labels_json(tmp_path: Path) -> None:
     json_path = tmp_path / "labels.json"
     json_path.write_text(json.dumps({"slide_1": "MF", "slide_2": 0}))
