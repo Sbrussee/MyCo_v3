@@ -66,7 +66,12 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--probe_lr", type=float, default=1e-3)
     parser.add_argument("--probe_slides_per_class", type=int, default=150)
 
-    parser.add_argument("--mosaic_method", choices=["umap", "tsne"], default="umap")
+    parser.add_argument(
+        "--mosaic_method",
+        choices=["umap", "tsne"],
+        default="tsne",
+        help="Embedding projection method for mosaics (UMAP requires NumPy <2).",
+    )
     parser.add_argument("--mosaic_max_points", type=int, default=400)
     parser.add_argument("--mosaic_point_size", type=int, default=10)
     parser.add_argument("--mosaic_thumb_size", type=int, default=12)
