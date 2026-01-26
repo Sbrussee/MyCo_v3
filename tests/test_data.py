@@ -2,7 +2,14 @@ import json
 import pytest
 from pathlib import Path
 
-from myco.data import build_entries_from_dirs, load_centroids, parse_xml_centroids, read_slide_labels
+from myco.data import (
+    CellDataModule,
+    SlideEntry,
+    build_entries_from_dirs,
+    load_centroids,
+    parse_xml_centroids,
+    read_slide_labels,
+)
 
 
 def test_read_slide_labels_csv(tmp_path: Path) -> None:
@@ -78,3 +85,12 @@ def test_build_entries_from_dirs(tmp_path: Path) -> None:
     entries = build_entries_from_dirs(str(wsi_dir), str(ann_dir))
     assert len(entries) == 1
     assert entries[0].slide_id == "slide_1"
+
+
+def test_cell_datamodule_inherits_lightning_datamodule() -> None:
+    pl = pytest.importorskip("pytorch_lightning")
+    entries = [SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")]
+    datamodule = CellDataModule(entries=entries, epoch_length=1, batch_size=1, num_workers=0, seed=0)
+
+    assert isinstance(datamodule, pl.LightningDataModule)
+    assert hasattr(datamodule, "on_exception")
