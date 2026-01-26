@@ -15,13 +15,19 @@ from pathlib import Path
 
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import DeviceStatsMonitor, LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.callbacks import (
+    DeviceStatsMonitor,
+    LearningRateMonitor,
+    ModelCheckpoint,
+    TQDMProgressBar,
+)
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.strategies import DDPStrategy
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from myco.callbacks import BatchMetricsLogger
 from myco.data import CellDataModule, build_entries_from_dirs, read_slide_labels
 from myco.eval import EvalCallback, MosaicConfig, ProbeConfig
 from myco.model import MoCoV3Lit
@@ -57,6 +63,12 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--mlp_hidden", type=int, default=2048)
 
     parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument(
+        "--log_every_n_batches",
+        type=int,
+        default=50,
+        help="Log throughput/memory metrics every N batches.",
+    )
     parser.add_argument("--precision", default="bf16-mixed")
     parser.add_argument("--devices", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
@@ -83,7 +95,11 @@ def build_logger(outdir: str) -> CSVLogger:
     return CSVLogger(save_dir=outdir, name="logs")
 
 
-def build_callbacks(outdir: str, eval_cb: pl.Callback) -> list[pl.Callback]:
+def build_callbacks(
+    outdir: str,
+    eval_cb: pl.Callback,
+    log_every_n_batches: int,
+) -> list[pl.Callback]:
     """Create training callbacks for checkpointing, metrics, and device stats."""
     checkpoint_cb = ModelCheckpoint(
         dirpath=outdir,
@@ -94,7 +110,9 @@ def build_callbacks(outdir: str, eval_cb: pl.Callback) -> list[pl.Callback]:
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
     device_monitor = DeviceStatsMonitor()
-    return [checkpoint_cb, eval_cb, lr_monitor, device_monitor]
+    progress_bar = TQDMProgressBar(refresh_rate=1)
+    batch_logger = BatchMetricsLogger(log_every_n_batches=log_every_n_batches)
+    return [checkpoint_cb, eval_cb, lr_monitor, device_monitor, progress_bar, batch_logger]
 
 
 def main() -> None:
@@ -161,8 +179,8 @@ def main() -> None:
         strategy=DDPStrategy(find_unused_parameters=False) if args.devices > 1 else "auto",
         precision=args.precision,
         accumulate_grad_batches=args.accum,
-        callbacks=build_callbacks(args.outdir, eval_cb),
-        log_every_n_steps=50,
+        callbacks=build_callbacks(args.outdir, eval_cb, args.log_every_n_batches),
+        log_every_n_steps=args.log_every_n_batches,
         enable_checkpointing=True,
         logger=logger,
     )
