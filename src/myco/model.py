@@ -137,7 +137,16 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
             param_group["lr"] = self.hparams.lr * lr_scale
 
     def training_step(self, batch, batch_idx):
+        """Run one contrastive training step."""
+        assert isinstance(batch, (list, tuple)), "Expected batch to be a tuple/list of tensors."
+        assert len(batch) == 2, "Expected batch to contain exactly two tensors."
         x1, x2 = batch
+        assert isinstance(x1, torch.Tensor), "Expected x1 to be a torch.Tensor."
+        assert isinstance(x2, torch.Tensor), "Expected x2 to be a torch.Tensor."
+        assert x1.ndim == 4, "Expected x1 to have shape (batch, channels, height, width)."
+        assert x2.ndim == 4, "Expected x2 to have shape (batch, channels, height, width)."
+        assert x1.shape == x2.shape, "Expected x1 and x2 to share identical shapes."
+        assert x1.shape[0] > 0, "Expected a positive batch size."
         self._update_learning_rate(batch_idx)
         momentum = self._momentum_schedule(self._epoch_progress(batch_idx))
         with torch.no_grad():
@@ -160,6 +169,9 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
     @torch.no_grad()
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """Encode input images into projection embeddings."""
+        assert isinstance(x, torch.Tensor), "Expected x to be a torch.Tensor."
+        assert x.ndim == 4, "Expected x to have shape (batch, channels, height, width)."
+        assert x.shape[0] > 0, "Expected a positive batch size."
         return self.q_proj(self.q_enc(x))
 
     def extract_weights(self) -> Dict[str, torch.Tensor]:
