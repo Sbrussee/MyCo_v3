@@ -8,6 +8,7 @@
 #SBATCH --time=48:00:00
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
+#SBATCH --open-mode=append
 
 set -euo pipefail
 
@@ -57,8 +58,13 @@ export PYTHONUNBUFFERED=1
 
 # Log progress/metrics to stdout+file, and CSV metrics to OUTDIR/logs.
 LOG_FILE="${OUTDIR}/train_${SLURM_JOB_ID:-manual}.log"
+SLURM_STDOUT_FILE="${SLURM_JOB_NAME:-myco_v3_ssl}_${SLURM_JOB_ID:-manual}.out"
+SLURM_STDERR_FILE="${SLURM_JOB_NAME:-myco_v3_ssl}_${SLURM_JOB_ID:-manual}.err"
 
-srun \
+echo "SLURM_STDOUT_FILE=${SLURM_STDOUT_FILE}"
+echo "SLURM_STDERR_FILE=${SLURM_STDERR_FILE}"
+
+srun --unbuffered --kill-on-bad-exit=1 \
   uv run ../train_model.py \
     --wsi_dir "${WSI_DIR}" \
     --ann_dir "${ANN_DIR}" \
@@ -66,5 +72,12 @@ srun \
     --outdir "${OUTDIR}" \
     --devices "${SLURM_GPUS_ON_NODE:-1}" \
   2>&1 | tee "${LOG_FILE}"
+
+if [[ -f "${SLURM_STDOUT_FILE}" || -f "${SLURM_STDERR_FILE}" ]]; then
+  SLURM_LOG_DIR="${OUTDIR}/slurm_logs"
+  mkdir -p "${SLURM_LOG_DIR}"
+  [[ -f "${SLURM_STDOUT_FILE}" ]] && mv "${SLURM_STDOUT_FILE}" "${SLURM_LOG_DIR}/"
+  [[ -f "${SLURM_STDERR_FILE}" ]] && mv "${SLURM_STDERR_FILE}" "${SLURM_LOG_DIR}/"
+fi
 
 echo "Finished at $(date)"
