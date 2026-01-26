@@ -7,23 +7,10 @@ import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Iterable, List, Optional, Tuple
 
-if TYPE_CHECKING:
-    import pytorch_lightning as pl
-    import torch
-    from pytorch_lightning import LightningDataModule as PLDataModule
-    from torch.utils.data import DataLoader, IterableDataset
-else:
-    class IterableDataset:  # type: ignore[no-redef]
-        """Fallback IterableDataset base when torch is unavailable."""
-
-        pass
-
-    class PLDataModule:  # type: ignore[no-redef]
-        """Fallback LightningDataModule base when Lightning is unavailable."""
-
-        pass
+from pytorch_lightning import LightningDataModule as PLDataModule
+from torch.utils.data import DataLoader, IterableDataset
 
 
 
@@ -51,7 +38,11 @@ def read_slide_labels(path: str) -> Dict[str, int]:
     def _map_label(raw: object) -> Optional[int]:
         if raw is None:
             return None
+        if isinstance(raw, (int, float)) and raw in (0, 1):
+            return int(raw)
         text = str(raw).strip().upper()
+        if text in {"0", "1"}:
+            return int(text)
         if text == "MF":
             return 1
         if text == "BID":
@@ -306,6 +297,14 @@ class WSICellMoCoIterable(IterableDataset):
             img40 = self.rotcrop(patch)
             view1 = self.aug(img40)
             view2 = self.aug(img40)
+            assert isinstance(view1, torch.Tensor), "Augmentation pipeline must return torch.Tensor."
+            assert isinstance(view2, torch.Tensor), "Augmentation pipeline must return torch.Tensor."
+            assert view1.shape == view2.shape, "Paired views must have identical shapes."
+            assert view1.ndim == 3, f"Expected CHW tensor, got shape {tuple(view1.shape)}."
+            expected_hw = (self.out_size, self.out_size)
+            assert view1.shape[-2:] == expected_hw, (
+                f"Expected HxW {expected_hw}, got {tuple(view1.shape[-2:])}."
+            )
             yield view1, view2
 
 
@@ -316,6 +315,11 @@ class CellDataModule(PLDataModule):
         self, entries: List[SlideEntry], epoch_length: int, batch_size: int, num_workers: int, seed: int
     ) -> None:
         super().__init__()
+        assert isinstance(entries, list), "entries must be a list of SlideEntry objects."
+        assert all(isinstance(entry, SlideEntry) for entry in entries), "entries must contain SlideEntry objects."
+        assert epoch_length > 0, "epoch_length must be a positive integer."
+        assert batch_size > 0, "batch_size must be a positive integer."
+        assert num_workers >= 0, "num_workers must be non-negative."
         self.entries = entries
         self.epoch_length = epoch_length
         self.batch_size = batch_size
@@ -323,8 +327,6 @@ class CellDataModule(PLDataModule):
         self.seed = seed
 
     def train_dataloader(self) -> DataLoader:
-        from torch.utils.data import DataLoader
-
         dataset = WSICellMoCoIterable(self.entries, self.epoch_length, seed=self.seed)
         return DataLoader(
             dataset,
