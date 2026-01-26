@@ -39,45 +39,96 @@ class SlideEntry:
 def read_slide_labels(path: str) -> Dict[str, int]:
     """Read slide labels from CSV/JSON into a slide_id -> {0,1} mapping.
 
-    Expected CSV columns:
-      - slide_id or slide (string identifier)
-      - label (string/int that maps to a binary label)
+    Expected columns/keys:
+      - slide_id or slide
+      - label or category
+
+    Only keeps slides explicitly labeled as 'MF' or 'BID' (case-insensitive).
+    All other labels are ignored.
+
+    Supports comma- or semicolon-separated CSV (auto-detected).
     """
+    def _map_label(raw: object) -> Optional[int]:
+        if raw is None:
+            return None
+        text = str(raw).strip().upper()
+        if text == "MF":
+            return 1
+        if text == "BID":
+            return 0
+        return None  # ignore everything else
+
     if path.lower().endswith(".json"):
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
+
         output: Dict[str, int] = {}
-        for slide_id, label in data.items():
-            if isinstance(label, str):
-                output[slide_id] = 1 if label.strip().upper() == "MF" else 0
-            else:
-                output[slide_id] = int(label)
-        return output
+        # Support either {slide_id: label} or [{"slide_id": ..., "label": ...}, ...]
+        if isinstance(data, dict):
+            for slide_id, label_raw in data.items():
+                mapped = _map_label(label_raw)
+                if mapped is None:
+                    continue
+                sid = str(slide_id).strip()
+                if not sid:
+                    continue
+                output[sid] = mapped
+            return output
+
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                sid_raw = item.get("slide_id") or item.get("slide")
+                label_raw = item.get("label") or item.get("category")
+                mapped = _map_label(label_raw)
+                if mapped is None or sid_raw is None:
+                    continue
+                sid = str(sid_raw).strip()
+                if not sid:
+                    continue
+                output[sid] = mapped
+            return output
+
+        raise ValueError("Unsupported JSON structure for slide labels.")
 
     output: Dict[str, int] = {}
     with open(path, "r", newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
+        sample = handle.read(8192)
+        handle.seek(0)
+
+        delimiter = ","
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=";,")
+            delimiter = dialect.delimiter
+        except csv.Error:
+            if ";" in sample and "," not in sample:
+                delimiter = ";"
+
+        reader = csv.DictReader(handle, delimiter=delimiter)
         fieldnames = [name.strip() for name in (reader.fieldnames or [])]
         assert fieldnames, "CSV must include headers."
+
         field_map = {name.lower(): name for name in fieldnames}
         slide_key = field_map.get("slide_id") or field_map.get("slide")
         assert slide_key is not None, "CSV must contain a 'slide_id' or 'slide' column."
-        label_key = field_map.get("label")
-        assert label_key is not None, "CSV must contain a 'label' column."
+        label_key = field_map.get("label") or field_map.get("category")
+        assert label_key is not None, "CSV must contain a 'label' or 'category' column."
+
         for row in reader:
             slide_id_raw = row.get(slide_key)
-            assert slide_id_raw is not None, "Slide identifier is missing in CSV row."
-            slide_id = slide_id_raw.strip()
-            assert slide_id, "Slide identifier must be non-empty."
             label_raw = row.get(label_key)
-            assert label_raw is not None, "Label is missing in CSV row."
-            label = label_raw.strip().upper()
-            if label in ["MF", "1", "TRUE", "T"]:
-                output[slide_id] = 1
-            elif label in ["BID", "0", "FALSE", "F"]:
-                output[slide_id] = 0
-            else:
-                output[slide_id] = int(float(label))
+
+            mapped = _map_label(label_raw)
+            if mapped is None or slide_id_raw is None:
+                continue
+
+            slide_id = slide_id_raw.strip()
+            if not slide_id:
+                continue
+
+            output[slide_id] = mapped
+
     return output
 
 

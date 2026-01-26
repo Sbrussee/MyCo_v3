@@ -2,7 +2,8 @@
 #SBATCH --job-name=myco_v3_ssl
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=16
+#SBATCH --partition=PATHgpu,gpu-medium,gpu-long
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=48:00:00
 #SBATCH --output=%x_%j.out
@@ -28,6 +29,12 @@ set -euo pipefail
 #   4) OUTDIR: output directory for checkpoints, logs, mosaics, and metrics
 ###############################################################################
 
+
+export WSI_DIR="/exports/path-cutane-lymfomen-hpc/Thom_Doeleman/WSI_database_cropped"
+export ANN_DIR="/exports/path-cutane-lymfomen-hpc/siemen/MIRAGE/MIRAGE/outputs/segmentations"
+export SLIDE_LABELS="/exports/path-cutane-lymfomen-hpc/Thom_Doeleman/WSI_database_cropped/annotations_MF_BID_dec2025_T1.csv"
+export OUTDIR="./outputs/myco_v3_ssl"
+
 WSI_DIR="${WSI_DIR:?Set WSI_DIR to your WSI directory}"
 ANN_DIR="${ANN_DIR:?Set ANN_DIR to your annotation directory}"
 SLIDE_LABELS="${SLIDE_LABELS:?Set SLIDE_LABELS to labels CSV}"
@@ -52,7 +59,7 @@ export PYTHONUNBUFFERED=1
 LOG_FILE="${OUTDIR}/train_${SLURM_JOB_ID:-manual}.log"
 
 srun \
-  python train_model.py \
+  uv run ../train_model.py \
     --wsi_dir "${WSI_DIR}" \
     --ann_dir "${ANN_DIR}" \
     --slide_labels "${SLIDE_LABELS}" \
