@@ -49,6 +49,7 @@ logs during SSL training. The script writes:
 
 - `OUTDIR/logs/*/metrics.csv` via the PyTorch Lightning CSV logger.
 - `OUTDIR/train_<jobid>.log` with stdout progress + evaluation metrics.
+- `OUTDIR/slurm_logs/*` with the raw Slurm stdout/stderr logs (after job completion).
 - `OUTDIR/moco-*.ckpt` and `OUTDIR/last.ckpt` checkpoints.
 
 ```bash
