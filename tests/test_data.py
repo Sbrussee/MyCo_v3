@@ -103,7 +103,8 @@ def test_wsi_iterable_filters_empty_centroids(monkeypatch) -> None:
         SlideEntry(slide_id="slide_2", wsi_path="slide_2.svs", ann_path="slide_2.xml"),
     ]
 
-    def fake_load_centroids(path: str):
+    def fake_load_centroids(path: str, slide_path: str | None = None):
+        del slide_path
         if "slide_1" in path:
             return [(1.0, 2.0)]
         return []
@@ -118,7 +119,8 @@ def test_wsi_iterable_filters_empty_centroids(monkeypatch) -> None:
 def test_wsi_iterable_raises_without_centroids(monkeypatch) -> None:
     entries = [SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")]
 
-    def fake_load_centroids(path: str):
+    def fake_load_centroids(path: str, slide_path: str | None = None):
+        del slide_path
         return []
 
     monkeypatch.setattr("myco.data.load_centroids", fake_load_centroids)
