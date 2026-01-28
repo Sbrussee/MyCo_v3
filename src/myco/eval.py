@@ -215,7 +215,7 @@ class EvalCallback(pl.Callback):
             if label is None:
                 skipped_missing_label += 1
                 continue
-            centroids = load_centroids(entry.ann_path)
+            centroids = load_centroids(entry.ann_path, slide_path=entry.wsi_path)
             if not centroids:
                 skipped_missing_centroids += 1
                 continue

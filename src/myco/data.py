@@ -126,14 +126,19 @@ def read_slide_labels(path: str) -> Dict[str, int]:
     return output
 
 
-def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
-    """Parse centroids from a GeoJSON or JSON annotation file."""
+def parse_geojson_centroids_from_payload(data: Dict[str, object]) -> List[Tuple[float, float]]:
+    """Parse centroids from a GeoJSON payload.
+
+    Expected payload format:
+      - {"features": [{"geometry": {"type": "Point"|"Polygon"|...}}]}
+    """
     from shapely.geometry import shape
 
-    with open(path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    assert isinstance(data, dict), "GeoJSON payload must be a dictionary."
     coords: List[Tuple[float, float]] = []
     for feat in data.get("features", []):
+        if not isinstance(feat, dict):
+            continue
         geom = feat.get("geometry")
         if geom is None:
             continue
@@ -141,6 +146,13 @@ def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
         centroid = geom_obj if geom_obj.geom_type == "Point" else geom_obj.centroid
         coords.append((float(centroid.x), float(centroid.y)))
     return coords
+
+
+def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
+    """Parse centroids from a GeoJSON or JSON annotation file."""
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    return parse_geojson_centroids_from_payload(data)
 
 
 def parse_xml_centroids(path: str) -> List[Tuple[float, float]]:
@@ -159,15 +171,40 @@ def parse_xml_centroids(path: str) -> List[Tuple[float, float]]:
     return coords
 
 
-def load_centroids(path: str) -> List[Tuple[float, float]]:
-    """Load centroids from XML or GeoJSON annotations with on-disk caching."""
+def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[float, float]]:
+    """Load centroids from XML, GeoJSON, or HistoPLUS JSON annotations.
+
+    Parameters
+    ----------
+    path : str
+        Path to the annotation file.
+    slide_path : str, optional
+        WSI path required for HistoPLUS JSON annotations (tile-local coordinates).
+    """
     cache_path = _centroid_cache_path(path)
     if cache_path.exists():
         return _read_centroid_cache(cache_path)
 
     lower = path.lower()
-    if lower.endswith(".geojson") or lower.endswith(".json"):
+    if lower.endswith(".geojson"):
         centroids = parse_geojson_centroids(path)
+    elif lower.endswith(".json"):
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict) and "cell_masks" in data:
+            if slide_path is None:
+                raise ValueError("slide_path must be provided for HistoPLUS JSON annotations.")
+            from .histoplus import histoplus_centroids_from_payload
+
+            cell_masks = data.get("cell_masks", [])
+            centroids = histoplus_centroids_from_payload(
+                cell_masks=cell_masks,
+                slide_path=slide_path,
+                apply_bounds_offset=False,
+                progress=False,
+            )
+        else:
+            centroids = parse_geojson_centroids_from_payload(data)
     elif lower.endswith(".xml"):
         centroids = parse_xml_centroids(path)
     else:
@@ -265,7 +302,7 @@ class WSICellMoCoIterable(IterableDataset):
 
         self.centroids: Dict[str, List[Tuple[float, float]]] = {}
         for entry in entries:
-            self.centroids[entry.slide_id] = load_centroids(entry.ann_path)
+            self.centroids[entry.slide_id] = load_centroids(entry.ann_path, slide_path=entry.wsi_path)
         self.valid_entries = [entry for entry in entries if self.centroids.get(entry.slide_id)]
         total_centroids = sum(len(self.centroids.get(entry.slide_id, [])) for entry in entries)
         logger.info(

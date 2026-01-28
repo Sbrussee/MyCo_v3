@@ -82,7 +82,7 @@ def run_inference(
 
     entries = build_entries_from_dirs(wsi_dir, ann_dir)
     for entry in entries:
-        centroids = load_centroids(entry.ann_path)
+        centroids = load_centroids(entry.ann_path, slide_path=entry.wsi_path)
         if not centroids:
             continue
         embeddings = _embed_slide(model, entry, centroids, max_cells, device)
