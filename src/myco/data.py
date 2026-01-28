@@ -148,6 +148,63 @@ def parse_geojson_centroids_from_payload(data: Dict[str, object]) -> List[Tuple[
     return coords
 
 
+def _coerce_centroid(item: object) -> Optional[Tuple[float, float]]:
+    """Coerce a centroid-like object into a numeric (x, y) tuple."""
+    if item is None:
+        return None
+    if isinstance(item, (list, tuple)) and len(item) >= 2:
+        return float(item[0]), float(item[1])
+    if isinstance(item, dict):
+        if "centroid" in item:
+            return _coerce_centroid(item.get("centroid"))
+        if "center" in item:
+            return _coerce_centroid(item.get("center"))
+        if "x" in item and "y" in item:
+            return float(item["x"]), float(item["y"])
+        if "X" in item and "Y" in item:
+            return float(item["X"]), float(item["Y"])
+    return None
+
+
+def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]:
+    """Parse centroids from JSON payloads that are not GeoJSON.
+
+    Supports:
+      - {"centroids": [[x, y], ...]}
+      - {"cells"/"objects"/"instances"/"annotations"/"nuclei": [{"centroid": ...}, ...]}
+      - [{"x": ..., "y": ...}, ...] or [[x, y], ...]
+    """
+    coords: List[Tuple[float, float]] = []
+
+    def _append_from_list(items: Iterable[object]) -> None:
+        for item in items:
+            centroid = _coerce_centroid(item)
+            if centroid is None and isinstance(item, dict):
+                centroid = _coerce_centroid(item.get("centroid") or item.get("center"))
+            if centroid is None:
+                continue
+            coords.append((float(centroid[0]), float(centroid[1])))
+
+    if isinstance(data, dict):
+        if "features" in data:
+            return parse_geojson_centroids_from_payload(data)
+        if "centroids" in data:
+            centroids = data.get("centroids", [])
+            if isinstance(centroids, list):
+                _append_from_list(centroids)
+        for key in ("cells", "objects", "instances", "annotations", "nuclei"):
+            items = data.get(key)
+            if isinstance(items, list):
+                _append_from_list(items)
+        return coords
+
+    if isinstance(data, list):
+        _append_from_list(data)
+        return coords
+
+    return coords
+
+
 def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
     """Parse centroids from a GeoJSON or JSON annotation file."""
     with open(path, "r", encoding="utf-8") as handle:
@@ -204,11 +261,18 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
                 progress=False,
             )
         else:
-            centroids = parse_geojson_centroids_from_payload(data)
+            centroids = parse_json_centroids_from_payload(data)
     elif lower.endswith(".xml"):
         centroids = parse_xml_centroids(path)
     else:
         raise ValueError(f"Unsupported annotation format: {path}")
+
+    if not centroids:
+        logger.debug(
+            "No centroids parsed from %s (format=%s).",
+            path,
+            Path(path).suffix,
+        )
 
     _write_centroid_cache(cache_path, centroids)
     return centroids
