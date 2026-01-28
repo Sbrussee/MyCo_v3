@@ -82,6 +82,7 @@ wsis/
 annotations/
   slide_001.xml
   slide_002.geojson
+  slide_003.json
 labels.csv
 ```
 
@@ -92,8 +93,10 @@ labels.csv
 These inputs are required for both `myco-train` and `scripts/train_myco.sbatch`:
 
 - **WSI directory (`--wsi_dir` / `WSI_DIR`)**: contains WSI files like `slide_001.svs`.
-- **Annotation directory (`--ann_dir` / `ANN_DIR`)**: contains one `.xml` or `.geojson`
-  per slide, with filenames matching the WSI slide IDs (e.g., `slide_001.xml`).
+- **Annotation directory (`--ann_dir` / `ANN_DIR`)**: contains one `.xml`, `.geojson`,
+  or `.json` per slide, with filenames matching the WSI slide IDs (e.g., `slide_001.xml`).
+  JSON annotations can include `cell_masks` (HistoPLUS) or centroid lists such as
+  `{"centroids": [[x, y], ...]}` or lists of objects with `centroid` / `x,y` fields.
 - **Slide labels CSV (`--slide_labels` / `SLIDE_LABELS`)**: CSV with columns
   `slide_id,label`, where labels are `BID`/`MF` or `0`/`1`.
 - **Output directory (`--outdir` / `OUTDIR`)**: destination for checkpoints, metrics,
