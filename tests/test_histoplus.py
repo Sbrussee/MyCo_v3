@@ -75,3 +75,48 @@ def test_histoplus_centroids_from_payload_basic(monkeypatch: pytest.MonkeyPatch)
 
     centroids = histoplus_centroids_from_payload(cell_masks=cell_masks, slide_path="fake.svs")
     assert centroids == [(220.0, 440.0), (260.0, 480.0)]
+
+
+def test_histoplus_centroids_from_payload_coordinates(monkeypatch: pytest.MonkeyPatch) -> None:
+    openslide = pytest.importorskip("openslide")
+
+    class FakeSlide:
+        properties = {"openslide.bounds-x": "0", "openslide.bounds-y": "0"}
+
+        def close(self) -> None:
+            return None
+
+    class FakeDeepZoomGenerator:
+        def __init__(self, slide, tile_size: int, overlap: int, limit_bounds: bool) -> None:
+            del slide, overlap, limit_bounds
+            self.tile_size = tile_size
+            self.level_count = 2
+
+        def get_tile_coordinates(self, level: int, address: tuple[int, int]):
+            tile_col, tile_row = address
+            level_scale = 2 ** (self.level_count - 1 - level)
+            return ((tile_col * self.tile_size * level_scale, tile_row * self.tile_size * level_scale), None, None)
+
+    monkeypatch.setattr(openslide, "OpenSlide", lambda _: FakeSlide())
+    monkeypatch.setattr(openslide.deepzoom, "DeepZoomGenerator", FakeDeepZoomGenerator)
+
+    cell_masks = [
+        {
+            "level": 0,
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "masks": [
+                {
+                    "coordinates": [
+                        [10, 20],
+                        [30, 40],
+                        [50, 60],
+                    ]
+                }
+            ],
+        }
+    ]
+
+    centroids = histoplus_centroids_from_payload(cell_masks=cell_masks, slide_path="fake.svs")
+    assert centroids == [(30.0, 40.0)]
