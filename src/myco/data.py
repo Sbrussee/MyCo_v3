@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import random
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from pytorch_lightning import LightningDataModule as PLDataModule
 from torch.utils.data import DataLoader, IterableDataset
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -263,6 +266,18 @@ class WSICellMoCoIterable(IterableDataset):
         self.centroids: Dict[str, List[Tuple[float, float]]] = {}
         for entry in entries:
             self.centroids[entry.slide_id] = load_centroids(entry.ann_path)
+        self.valid_entries = [entry for entry in entries if self.centroids.get(entry.slide_id)]
+        total_centroids = sum(len(self.centroids.get(entry.slide_id, [])) for entry in entries)
+        logger.info(
+            "WSI dataset initialized with %d entries (%d with centroids, %d total centroids).",
+            len(entries),
+            len(self.valid_entries),
+            total_centroids,
+        )
+        if not self.valid_entries:
+            raise ValueError(
+                "No valid entries with centroids found. Check annotation files and formats."
+            )
 
     def __iter__(self):
         import torch
@@ -275,19 +290,26 @@ class WSICellMoCoIterable(IterableDataset):
         rank = int(os.environ.get("RANK", "0"))
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
 
-        entries = self.all_entries[rank::world_size]
+        entries = self.valid_entries[rank::world_size]
         if not entries:
-            entries = self.all_entries
+            entries = self.valid_entries
 
         rng = random.Random(self.seed + 1000 * rank + 10 * worker_id)
 
         n_yield = self.epoch_length // (world_size * num_workers)
+        if n_yield <= 0:
+            logger.warning(
+                "Epoch length %d too small for world size %d and %d workers; no samples will be yielded.",
+                self.epoch_length,
+                world_size,
+                num_workers,
+            )
+            return
         for _ in range(n_yield):
             entry = rng.choice(entries)
-            cents = self.centroids.get(entry.slide_id, [])
-            if not cents:
-                continue
-            center = rng.choice(cents)
+            centroids = self.centroids.get(entry.slide_id, [])
+            assert centroids, f"Expected non-empty centroids for slide {entry.slide_id}."
+            center = rng.choice(centroids)
             slide = safe_open_slide(entry.wsi_path)
             try:
                 patch = read_patch(slide, center, self.big_size)
