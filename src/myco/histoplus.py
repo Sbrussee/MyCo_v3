@@ -47,10 +47,32 @@ def _iter_global_centroids(
     apply_bounds_offset: bool,
     progress: bool,
 ) -> Iterable[Tuple[float, float]]:
-    """Yield slide-level centroids from HistoPLUS cell mask tiles."""
+    """Yield slide-level centroids from HistoPLUS cell mask tiles.
+
+    If a mask lacks an explicit centroid, the mean of its polygon coordinates is used.
+    """
     iterator = cell_masks
     if progress:
         iterator = tqdm(iterator, desc="Remapping HistoPLUS centroids", unit="tile")
+
+    def _centroid_from_coordinates(
+        coords: Iterable[Iterable[float]],
+    ) -> Optional[Tuple[float, float]]:
+        coord_list = list(coords)
+        if not coord_list:
+            return None
+        xs: List[float] = []
+        ys: List[float] = []
+        for coord in coord_list:
+            pair = list(coord)
+            if len(pair) < 2:
+                continue
+            xs.append(float(pair[0]))
+            ys.append(float(pair[1]))
+        if not xs or not ys:
+            return None
+        assert len(xs) == len(ys), "Coordinate pairs must have matching x/y lengths."
+        return sum(xs) / len(xs), sum(ys) / len(ys)
 
     for item in iterator:
         if not isinstance(item, dict):
@@ -68,6 +90,8 @@ def _iter_global_centroids(
             if not isinstance(mask, dict):
                 continue
             centroid = mask.get("centroid")
+            if centroid is None:
+                centroid = _centroid_from_coordinates(mask.get("coordinates", []))
             if centroid is None:
                 continue
             centroid_list = list(centroid)
