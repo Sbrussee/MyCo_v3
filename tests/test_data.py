@@ -5,6 +5,7 @@ from pathlib import Path
 from myco.data import (
     CellDataModule,
     SlideEntry,
+    WSICellMoCoIterable,
     build_entries_from_dirs,
     load_centroids,
     parse_xml_centroids,
@@ -94,3 +95,33 @@ def test_cell_datamodule_inherits_lightning_datamodule() -> None:
 
     assert isinstance(datamodule, pl.LightningDataModule)
     assert hasattr(datamodule, "on_exception")
+
+
+def test_wsi_iterable_filters_empty_centroids(monkeypatch) -> None:
+    entries = [
+        SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml"),
+        SlideEntry(slide_id="slide_2", wsi_path="slide_2.svs", ann_path="slide_2.xml"),
+    ]
+
+    def fake_load_centroids(path: str):
+        if "slide_1" in path:
+            return [(1.0, 2.0)]
+        return []
+
+    monkeypatch.setattr("myco.data.load_centroids", fake_load_centroids)
+
+    dataset = WSICellMoCoIterable(entries=entries, epoch_length=10, seed=0)
+    assert len(dataset.valid_entries) == 1
+    assert dataset.valid_entries[0].slide_id == "slide_1"
+
+
+def test_wsi_iterable_raises_without_centroids(monkeypatch) -> None:
+    entries = [SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")]
+
+    def fake_load_centroids(path: str):
+        return []
+
+    monkeypatch.setattr("myco.data.load_centroids", fake_load_centroids)
+
+    with pytest.raises(ValueError, match="No valid entries with centroids"):
+        WSICellMoCoIterable(entries=entries, epoch_length=10, seed=0)

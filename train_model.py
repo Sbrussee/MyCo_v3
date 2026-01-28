@@ -8,9 +8,10 @@ self-supervised training with PyTorch Lightning.
 from __future__ import annotations
 
 import argparse
+import logging
+import math
 import os
 import sys
-import math
 from pathlib import Path
 
 import pytorch_lightning as pl
@@ -116,6 +117,10 @@ def build_callbacks(
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
     args = build_argparser().parse_args()
     os.makedirs(args.outdir, exist_ok=True)
     seed_all(args.seed)
