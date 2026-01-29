@@ -38,6 +38,21 @@ def _deepzoom_tile_origin_and_scale(
     return float(tile_l0_x), float(tile_l0_y), float(level_scale)
 
 
+def _coerce_point(point: object) -> Optional[Tuple[float, float]]:
+    """Coerce a point-like object into an (x, y) tuple."""
+    if point is None:
+        return None
+    if isinstance(point, dict):
+        x_val = point.get("x") if "x" in point else point.get("X")
+        y_val = point.get("y") if "y" in point else point.get("Y")
+        if x_val is None or y_val is None:
+            return None
+        return float(x_val), float(y_val)
+    if isinstance(point, (list, tuple)) and len(point) >= 2:
+        return float(point[0]), float(point[1])
+    return None
+
+
 def _iter_global_centroids(
     cell_masks: List[dict],
     dz,
@@ -64,11 +79,11 @@ def _iter_global_centroids(
         xs: List[float] = []
         ys: List[float] = []
         for coord in coord_list:
-            pair = list(coord)
-            if len(pair) < 2:
+            pair = _coerce_point(coord)
+            if pair is None:
                 continue
-            xs.append(float(pair[0]))
-            ys.append(float(pair[1]))
+            xs.append(pair[0])
+            ys.append(pair[1])
         if not xs or not ys:
             return None
         assert len(xs) == len(ys), "Coordinate pairs must have matching x/y lengths."
@@ -86,17 +101,22 @@ def _iter_global_centroids(
             continue
         tile_l0_x, tile_l0_y, level_scale = tile_info
 
-        for mask in item.get("masks", []):
+        mask_payload = item.get("masks")
+        if mask_payload is None:
+            mask_payload = item.get("cell_masks") or item.get("cells") or item.get("objects")
+        if not isinstance(mask_payload, list):
+            continue
+        for mask in mask_payload:
             if not isinstance(mask, dict):
                 continue
-            centroid = mask.get("centroid")
+            centroid = _coerce_point(mask.get("centroid"))
             if centroid is None:
                 centroid = _centroid_from_coordinates(mask.get("coordinates", []))
             if centroid is None:
                 continue
-            centroid_list = list(centroid)
-            assert len(centroid_list) >= 2, "Centroid must have at least two coordinates."
-            local_x, local_y = float(centroid_list[0]), float(centroid_list[1])
+            local_x, local_y = centroid
+            assert isinstance(local_x, float), "Centroid x must be numeric."
+            assert isinstance(local_y, float), "Centroid y must be numeric."
             global_x = tile_l0_x + local_x * level_scale
             global_y = tile_l0_y + local_y * level_scale
             if apply_bounds_offset:

@@ -248,12 +248,23 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
     elif lower.endswith(".json"):
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
-        if isinstance(data, dict) and "cell_masks" in data:
+        is_histoplus_dict = isinstance(data, dict) and (
+            "cell_masks" in data or "cellMasks" in data
+        )
+        is_histoplus_list = isinstance(data, list) and any(
+            isinstance(item, dict) and ("masks" in item or "cell_masks" in item or "cells" in item)
+            for item in data
+        )
+        if is_histoplus_dict or is_histoplus_list:
             if slide_path is None:
                 raise ValueError("slide_path must be provided for HistoPLUS JSON annotations.")
             from .histoplus import histoplus_centroids_from_payload
 
-            cell_masks = data.get("cell_masks", [])
+            if is_histoplus_dict:
+                cell_masks = data.get("cell_masks") or data.get("cellMasks") or []
+            else:
+                cell_masks = data
+            assert isinstance(cell_masks, list), "cell_masks must be a list for HistoPLUS conversion."
             centroids = histoplus_centroids_from_payload(
                 cell_masks=cell_masks,
                 slide_path=slide_path,
