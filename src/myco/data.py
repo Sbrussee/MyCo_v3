@@ -220,6 +220,20 @@ def _summarize_annotation_payload(data: object) -> str:
     return f"type={type(data).__name__}"
 
 
+def _truncate_payload(payload: str, limit: int = 50000) -> str:
+    """Truncate payload strings to avoid excessive logging."""
+    assert limit > 0, "limit must be positive."
+    if len(payload) <= limit:
+        return payload
+    return f"{payload[:limit]}\n... [truncated {len(payload) - limit} chars]"
+
+
+def _read_annotation_text(path: str) -> str:
+    """Read annotation file text for debug logging."""
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
 def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
     """Parse centroids from a GeoJSON or JSON annotation file."""
     with open(path, "r", encoding="utf-8") as handle:
@@ -258,11 +272,14 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         return _read_centroid_cache(cache_path)
 
     lower = path.lower()
+    raw_text: Optional[str] = None
     if lower.endswith(".geojson"):
-        centroids = parse_geojson_centroids(path)
+        raw_text = _read_annotation_text(path)
+        data = json.loads(raw_text)
+        centroids = parse_geojson_centroids_from_payload(data)
     elif lower.endswith(".json"):
-        with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+        raw_text = _read_annotation_text(path)
+        data = json.loads(raw_text)
         is_histoplus_dict = isinstance(data, dict) and (
             "cell_masks" in data or "cellMasks" in data
         )
@@ -295,13 +312,19 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
 
     if not centroids:
         summary = ""
-        if lower.endswith(".json"):
+        if lower.endswith((".json", ".geojson")):
             summary = f" Payload summary: {_summarize_annotation_payload(data)}."
-        logger.debug(
-            "No centroids parsed from %s (format=%s).%s",
+        if raw_text is None and lower.endswith(".xml"):
+            raw_text = _read_annotation_text(path)
+        payload_text = ""
+        if raw_text is not None:
+            payload_text = f"\nAnnotation payload:\n{_truncate_payload(raw_text)}"
+        logger.warning(
+            "No centroids parsed from %s (format=%s).%s%s",
             path,
             Path(path).suffix,
             summary,
+            payload_text,
         )
 
     _write_centroid_cache(cache_path, centroids)
