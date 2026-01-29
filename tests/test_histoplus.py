@@ -42,6 +42,7 @@ def test_histoplus_centroids_from_payload_basic(monkeypatch: pytest.MonkeyPatch)
 
     class FakeSlide:
         properties = {"openslide.bounds-x": "0", "openslide.bounds-y": "0"}
+        level_downsamples = [1.0, 2.0, 4.0]
 
         def close(self) -> None:
             return None
@@ -82,6 +83,7 @@ def test_histoplus_centroids_from_payload_coordinates(monkeypatch: pytest.Monkey
 
     class FakeSlide:
         properties = {"openslide.bounds-x": "0", "openslide.bounds-y": "0"}
+        level_downsamples = [1.0, 2.0]
 
         def close(self) -> None:
             return None
@@ -127,6 +129,7 @@ def test_histoplus_centroids_supports_dict_centroids(monkeypatch: pytest.MonkeyP
 
     class FakeSlide:
         properties = {"openslide.bounds-x": "0", "openslide.bounds-y": "0"}
+        level_downsamples = [1.0, 2.0]
 
         def close(self) -> None:
             return None
@@ -179,3 +182,40 @@ def test_load_centroids_histoplus_list_payload(tmp_path: Path, monkeypatch: pyte
     centroids = load_centroids(str(json_path), slide_path="slide.svs")
     assert centroids == [(3.0, 4.0)]
     assert captured["slide_path"] == "slide.svs"
+
+
+def test_histoplus_centroids_from_payload_pixel_offsets(monkeypatch: pytest.MonkeyPatch) -> None:
+    openslide = pytest.importorskip("openslide")
+
+    class FakeSlide:
+        properties = {"openslide.bounds-x": "0", "openslide.bounds-y": "0"}
+        level_downsamples = [1.0, 4.0]
+
+        def close(self) -> None:
+            return None
+
+    class FakeDeepZoomGenerator:
+        def __init__(self, slide, tile_size: int, overlap: int, limit_bounds: bool) -> None:
+            del slide, overlap, limit_bounds, tile_size
+            self.level_count = 2
+
+        def get_tile_coordinates(self, level: int, address: tuple[int, int]):
+            raise ValueError("Simulated DeepZoom failure")
+
+    monkeypatch.setattr(openslide, "OpenSlide", lambda _: FakeSlide())
+    monkeypatch.setattr(openslide.deepzoom, "DeepZoomGenerator", FakeDeepZoomGenerator)
+
+    cell_masks = [
+        {
+            "level": 1,
+            "x": 100,
+            "y": 200,
+            "width": 224,
+            "masks": [
+                {"centroid": [10, 20]},
+            ],
+        }
+    ]
+
+    centroids = histoplus_centroids_from_payload(cell_masks=cell_masks, slide_path="fake.svs")
+    assert centroids == [(440.0, 880.0)]
