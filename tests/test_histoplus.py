@@ -120,3 +120,62 @@ def test_histoplus_centroids_from_payload_coordinates(monkeypatch: pytest.Monkey
 
     centroids = histoplus_centroids_from_payload(cell_masks=cell_masks, slide_path="fake.svs")
     assert centroids == [(30.0, 40.0)]
+
+
+def test_histoplus_centroids_supports_dict_centroids(monkeypatch: pytest.MonkeyPatch) -> None:
+    openslide = pytest.importorskip("openslide")
+
+    class FakeSlide:
+        properties = {"openslide.bounds-x": "0", "openslide.bounds-y": "0"}
+
+        def close(self) -> None:
+            return None
+
+    class FakeDeepZoomGenerator:
+        def __init__(self, slide, tile_size: int, overlap: int, limit_bounds: bool) -> None:
+            del slide, overlap, limit_bounds
+            self.tile_size = tile_size
+            self.level_count = 2
+
+        def get_tile_coordinates(self, level: int, address: tuple[int, int]):
+            tile_col, tile_row = address
+            level_scale = 2 ** (self.level_count - 1 - level)
+            return ((tile_col * self.tile_size * level_scale, tile_row * self.tile_size * level_scale), None, None)
+
+    monkeypatch.setattr(openslide, "OpenSlide", lambda _: FakeSlide())
+    monkeypatch.setattr(openslide.deepzoom, "DeepZoomGenerator", FakeDeepZoomGenerator)
+
+    cell_masks = [
+        {
+            "level": 0,
+            "x": 0,
+            "y": 0,
+            "width": 100,
+            "masks": [
+                {"centroid": {"x": 12, "y": 34}},
+            ],
+        }
+    ]
+
+    centroids = histoplus_centroids_from_payload(cell_masks=cell_masks, slide_path="fake.svs")
+    assert centroids == [(12.0, 34.0)]
+
+
+def test_load_centroids_histoplus_list_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    json_path = tmp_path / "histoplus.json"
+    json_path.write_text(json.dumps([{"width": 224, "masks": [{"centroid": [1, 2]}]}]))
+
+    captured = {}
+
+    def fake_converter(*, cell_masks, slide_path, apply_bounds_offset, progress):
+        captured["cell_masks"] = cell_masks
+        captured["slide_path"] = slide_path
+        captured["apply_bounds_offset"] = apply_bounds_offset
+        captured["progress"] = progress
+        return [(3.0, 4.0)]
+
+    monkeypatch.setattr("myco.histoplus.histoplus_centroids_from_payload", fake_converter)
+
+    centroids = load_centroids(str(json_path), slide_path="slide.svs")
+    assert centroids == [(3.0, 4.0)]
+    assert captured["slide_path"] == "slide.svs"
