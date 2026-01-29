@@ -88,6 +88,20 @@ def test_load_centroids_json_list_of_dicts(tmp_path: Path) -> None:
     assert coords == [(10.0, 20.0), (30.0, 40.0)]
 
 
+def test_load_centroids_json_points_key(tmp_path: Path) -> None:
+    json_path = tmp_path / "ann.json"
+    json_path.write_text(json.dumps({"points": [{"x": 5, "y": 6}, {"centroid": [7, 8]}]}))
+    coords = load_centroids(str(json_path))
+    assert coords == [(5.0, 6.0), (7.0, 8.0)]
+
+
+def test_load_centroids_json_detections_key(tmp_path: Path) -> None:
+    json_path = tmp_path / "ann.json"
+    json_path.write_text(json.dumps({"detections": [{"x": 11, "y": 12}]}))
+    coords = load_centroids(str(json_path))
+    assert coords == [(11.0, 12.0)]
+
+
 def test_build_entries_from_dirs(tmp_path: Path) -> None:
     wsi_dir = tmp_path / "wsis"
     ann_dir = tmp_path / "anns"
