@@ -172,6 +172,7 @@ def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]
     Supports:
       - {"centroids": [[x, y], ...]}
       - {"cells"/"objects"/"instances"/"annotations"/"nuclei": [{"centroid": ...}, ...]}
+      - {"points"/"detections"/"regions": [{"x": ..., "y": ...}, ...]}
       - [{"x": ..., "y": ...}, ...] or [[x, y], ...]
     """
     coords: List[Tuple[float, float]] = []
@@ -192,7 +193,7 @@ def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]
             centroids = data.get("centroids", [])
             if isinstance(centroids, list):
                 _append_from_list(centroids)
-        for key in ("cells", "objects", "instances", "annotations", "nuclei"):
+        for key in ("cells", "objects", "instances", "annotations", "nuclei", "points", "detections", "regions"):
             items = data.get(key)
             if isinstance(items, list):
                 _append_from_list(items)
@@ -203,6 +204,34 @@ def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]
         return coords
 
     return coords
+
+
+def _summarize_annotation_payload(data: object) -> str:
+    """Summarize the top-level annotation payload for debugging."""
+    if isinstance(data, dict):
+        keys = sorted(list(data.keys()))
+        keys_preview = ", ".join(keys[:10])
+        suffix = "" if len(keys) <= 10 else f" (+{len(keys) - 10} more)"
+        return f"dict keys: [{keys_preview}]{suffix}"
+    if isinstance(data, list):
+        preview = data[0] if data else None
+        preview_type = type(preview).__name__
+        return f"list length={len(data)} first_type={preview_type}"
+    return f"type={type(data).__name__}"
+
+
+def _truncate_payload(payload: str, limit: int = 50000) -> str:
+    """Truncate payload strings to avoid excessive logging."""
+    assert limit > 0, "limit must be positive."
+    if len(payload) <= limit:
+        return payload
+    return f"{payload[:limit]}\n... [truncated {len(payload) - limit} chars]"
+
+
+def _read_annotation_text(path: str) -> str:
+    """Read annotation file text for debug logging."""
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
 
 
 def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
@@ -243,11 +272,14 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         return _read_centroid_cache(cache_path)
 
     lower = path.lower()
+    raw_text: Optional[str] = None
     if lower.endswith(".geojson"):
-        centroids = parse_geojson_centroids(path)
+        raw_text = _read_annotation_text(path)
+        data = json.loads(raw_text)
+        centroids = parse_geojson_centroids_from_payload(data)
     elif lower.endswith(".json"):
-        with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+        raw_text = _read_annotation_text(path)
+        data = json.loads(raw_text)
         is_histoplus_dict = isinstance(data, dict) and (
             "cell_masks" in data or "cellMasks" in data
         )
@@ -279,10 +311,20 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         raise ValueError(f"Unsupported annotation format: {path}")
 
     if not centroids:
-        logger.debug(
-            "No centroids parsed from %s (format=%s).",
+        summary = ""
+        if lower.endswith((".json", ".geojson")):
+            summary = f" Payload summary: {_summarize_annotation_payload(data)}."
+        if raw_text is None and lower.endswith(".xml"):
+            raw_text = _read_annotation_text(path)
+        payload_text = ""
+        if raw_text is not None:
+            payload_text = f"\nAnnotation payload:\n{_truncate_payload(raw_text)}"
+        logger.warning(
+            "No centroids parsed from %s (format=%s).%s%s",
             path,
             Path(path).suffix,
+            summary,
+            payload_text,
         )
 
     _write_centroid_cache(cache_path, centroids)
