@@ -172,6 +172,7 @@ def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]
     Supports:
       - {"centroids": [[x, y], ...]}
       - {"cells"/"objects"/"instances"/"annotations"/"nuclei": [{"centroid": ...}, ...]}
+      - {"points"/"detections"/"regions": [{"x": ..., "y": ...}, ...]}
       - [{"x": ..., "y": ...}, ...] or [[x, y], ...]
     """
     coords: List[Tuple[float, float]] = []
@@ -192,7 +193,7 @@ def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]
             centroids = data.get("centroids", [])
             if isinstance(centroids, list):
                 _append_from_list(centroids)
-        for key in ("cells", "objects", "instances", "annotations", "nuclei"):
+        for key in ("cells", "objects", "instances", "annotations", "nuclei", "points", "detections", "regions"):
             items = data.get(key)
             if isinstance(items, list):
                 _append_from_list(items)
@@ -203,6 +204,20 @@ def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]
         return coords
 
     return coords
+
+
+def _summarize_annotation_payload(data: object) -> str:
+    """Summarize the top-level annotation payload for debugging."""
+    if isinstance(data, dict):
+        keys = sorted(list(data.keys()))
+        keys_preview = ", ".join(keys[:10])
+        suffix = "" if len(keys) <= 10 else f" (+{len(keys) - 10} more)"
+        return f"dict keys: [{keys_preview}]{suffix}"
+    if isinstance(data, list):
+        preview = data[0] if data else None
+        preview_type = type(preview).__name__
+        return f"list length={len(data)} first_type={preview_type}"
+    return f"type={type(data).__name__}"
 
 
 def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
@@ -279,10 +294,14 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         raise ValueError(f"Unsupported annotation format: {path}")
 
     if not centroids:
+        summary = ""
+        if lower.endswith(".json"):
+            summary = f" Payload summary: {_summarize_annotation_payload(data)}."
         logger.debug(
-            "No centroids parsed from %s (format=%s).",
+            "No centroids parsed from %s (format=%s).%s",
             path,
             Path(path).suffix,
+            summary,
         )
 
     _write_centroid_cache(cache_path, centroids)
