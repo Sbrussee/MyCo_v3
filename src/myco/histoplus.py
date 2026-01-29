@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from tqdm.auto import tqdm
 
@@ -38,6 +38,25 @@ def _deepzoom_tile_origin_and_scale(
     return float(tile_l0_x), float(tile_l0_y), float(level_scale)
 
 
+def _pixel_tile_origin_and_scale(
+    *,
+    tile_x: float,
+    tile_y: float,
+    level: int,
+    level_downsamples: Sequence[float],
+) -> Optional[Tuple[float, float, float]]:
+    """Resolve tile origin when HistoPLUS stores pixel offsets instead of tile indices."""
+    if level < 0 or level >= len(level_downsamples):
+        logger.warning(
+            "HistoPLUS level %d outside slide level range [0, %d).",
+            level,
+            len(level_downsamples),
+        )
+        return None
+    scale = float(level_downsamples[level])
+    return float(tile_x) * scale, float(tile_y) * scale, float(scale)
+
+
 def _coerce_point(point: object) -> Optional[Tuple[float, float]]:
     """Coerce a point-like object into an (x, y) tuple."""
     if point is None:
@@ -59,6 +78,7 @@ def _iter_global_centroids(
     *,
     offset_x: int,
     offset_y: int,
+    level_downsamples: Sequence[float],
     apply_bounds_offset: bool,
     progress: bool,
 ) -> Iterable[Tuple[float, float]]:
@@ -92,11 +112,20 @@ def _iter_global_centroids(
     for item in iterator:
         if not isinstance(item, dict):
             continue
-        tile_col = int(item.get("x", 0))
-        tile_row = int(item.get("y", 0))
+        tile_x = float(item.get("x", 0))
+        tile_y = float(item.get("y", 0))
+        tile_col = int(tile_x)
+        tile_row = int(tile_y)
         dz_level = int(item.get("level", 0))
 
         tile_info = _deepzoom_tile_origin_and_scale(dz, tile_col, tile_row, dz_level)
+        if tile_info is None:
+            tile_info = _pixel_tile_origin_and_scale(
+                tile_x=tile_x,
+                tile_y=tile_y,
+                level=dz_level,
+                level_downsamples=level_downsamples,
+            )
         if tile_info is None:
             continue
         tile_l0_x, tile_l0_y, level_scale = tile_info
@@ -168,12 +197,15 @@ def histoplus_centroids_from_payload(
         dz = DeepZoomGenerator(slide, tile_size=tile_size, overlap=overlap, limit_bounds=False)
         offset_x = int(slide.properties.get("openslide.bounds-x", 0))
         offset_y = int(slide.properties.get("openslide.bounds-y", 0))
+        level_downsamples = [float(value) for value in slide.level_downsamples]
+        assert level_downsamples, "Expected non-empty slide.level_downsamples."
         centroids = list(
             _iter_global_centroids(
                 cell_masks,
                 dz,
                 offset_x=offset_x,
                 offset_y=offset_y,
+                level_downsamples=level_downsamples,
                 apply_bounds_offset=apply_bounds_offset,
                 progress=progress,
             )
