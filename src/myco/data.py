@@ -13,6 +13,19 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from pytorch_lightning import LightningDataModule as PLDataModule
 from torch.utils.data import DataLoader, IterableDataset
 
+from .annotations import (
+    filter_centroids_to_bounds,
+    get_slide_geometry,
+    load_centroids_from_json,
+    parse_geojson_centroids,
+    parse_geojson_centroids_from_payload,
+    parse_json_centroids_from_payload,
+    parse_xml_centroids,
+    read_annotation_text,
+    summarize_annotation_payload,
+    truncate_payload,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -133,100 +146,6 @@ def read_slide_labels(path: str) -> Dict[str, int]:
     return output
 
 
-def parse_geojson_centroids_from_payload(data: Dict[str, object]) -> List[Tuple[float, float]]:
-    """Parse centroids from a GeoJSON payload.
-
-    Expected payload format:
-      - {"features": [{"geometry": {"type": "Point"|"Polygon"|...}}]}
-    """
-    from shapely.geometry import shape
-
-    assert isinstance(data, dict), "GeoJSON payload must be a dictionary."
-    coords: List[Tuple[float, float]] = []
-    for feat in data.get("features", []):
-        if not isinstance(feat, dict):
-            continue
-        geom = feat.get("geometry")
-        if geom is None:
-            continue
-        geom_obj = shape(geom)
-        centroid = geom_obj if geom_obj.geom_type == "Point" else geom_obj.centroid
-        coords.append((float(centroid.x), float(centroid.y)))
-    return coords
-
-
-def _coerce_centroid(item: object) -> Optional[Tuple[float, float]]:
-    """Coerce a centroid-like object into a numeric (x, y) tuple."""
-    if item is None:
-        return None
-    if isinstance(item, (list, tuple)) and len(item) >= 2:
-        return float(item[0]), float(item[1])
-    if isinstance(item, dict):
-        if "centroid" in item:
-            return _coerce_centroid(item.get("centroid"))
-        if "center" in item:
-            return _coerce_centroid(item.get("center"))
-        if "x" in item and "y" in item:
-            return float(item["x"]), float(item["y"])
-        if "X" in item and "Y" in item:
-            return float(item["X"]), float(item["Y"])
-    return None
-
-
-def parse_json_centroids_from_payload(data: object) -> List[Tuple[float, float]]:
-    """Parse centroids from JSON payloads that are not GeoJSON.
-
-    Supports:
-      - {"centroids": [[x, y], ...]}
-      - {"cells"/"objects"/"instances"/"annotations"/"nuclei": [{"centroid": ...}, ...]}
-      - {"points"/"detections"/"regions": [{"x": ..., "y": ...}, ...]}
-      - [{"x": ..., "y": ...}, ...] or [[x, y], ...]
-    """
-    coords: List[Tuple[float, float]] = []
-
-    def _append_from_list(items: Iterable[object]) -> None:
-        for item in items:
-            centroid = _coerce_centroid(item)
-            if centroid is None and isinstance(item, dict):
-                centroid = _coerce_centroid(item.get("centroid") or item.get("center"))
-            if centroid is None:
-                continue
-            coords.append((float(centroid[0]), float(centroid[1])))
-
-    if isinstance(data, dict):
-        if "features" in data:
-            return parse_geojson_centroids_from_payload(data)
-        if "centroids" in data:
-            centroids = data.get("centroids", [])
-            if isinstance(centroids, list):
-                _append_from_list(centroids)
-        for key in ("cells", "objects", "instances", "annotations", "nuclei", "points", "detections", "regions"):
-            items = data.get(key)
-            if isinstance(items, list):
-                _append_from_list(items)
-        return coords
-
-    if isinstance(data, list):
-        _append_from_list(data)
-        return coords
-
-    return coords
-
-
-def _summarize_annotation_payload(data: object) -> str:
-    """Summarize the top-level annotation payload for debugging."""
-    if isinstance(data, dict):
-        keys = sorted(list(data.keys()))
-        keys_preview = ", ".join(keys[:10])
-        suffix = "" if len(keys) <= 10 else f" (+{len(keys) - 10} more)"
-        return f"dict keys: [{keys_preview}]{suffix}"
-    if isinstance(data, list):
-        preview = data[0] if data else None
-        preview_type = type(preview).__name__
-        return f"list length={len(data)} first_type={preview_type}"
-    return f"type={type(data).__name__}"
-
-
 def _summarize_centroids(centroids: List[Tuple[float, float]]) -> str:
     """Summarize centroid coordinates for logging."""
     if not centroids:
@@ -237,43 +156,6 @@ def _summarize_centroids(centroids: List[Tuple[float, float]]) -> str:
         f"count={len(centroids)} x_range=({min(xs):.2f},{max(xs):.2f}) "
         f"y_range=({min(ys):.2f},{max(ys):.2f})"
     )
-
-
-def _truncate_payload(payload: str, limit: int = 50000) -> str:
-    """Truncate payload strings to avoid excessive logging."""
-    assert limit > 0, "limit must be positive."
-    if len(payload) <= limit:
-        return payload
-    return f"{payload[:limit]}\n... [truncated {len(payload) - limit} chars]"
-
-
-def _read_annotation_text(path: str) -> str:
-    """Read annotation file text for debug logging."""
-    with open(path, "r", encoding="utf-8") as handle:
-        return handle.read()
-
-
-def parse_geojson_centroids(path: str) -> List[Tuple[float, float]]:
-    """Parse centroids from a GeoJSON or JSON annotation file."""
-    with open(path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-    return parse_geojson_centroids_from_payload(data)
-
-
-def parse_xml_centroids(path: str) -> List[Tuple[float, float]]:
-    """Parse centroids from XML annotations (ASAP/QuPath style)."""
-    from lxml import etree
-
-    tree = etree.parse(path)
-    root = tree.getroot()
-    coords: List[Tuple[float, float]] = []
-    for coord in root.findall(".//Coordinate"):
-        x_val = coord.get("X") or coord.get("x")
-        y_val = coord.get("Y") or coord.get("y")
-        if x_val is None or y_val is None:
-            continue
-        coords.append((float(x_val), float(y_val)))
-    return coords
 
 
 def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[float, float]]:
@@ -293,37 +175,18 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
     lower = path.lower()
     raw_text: Optional[str] = None
     if lower.endswith(".geojson"):
-        raw_text = _read_annotation_text(path)
+        raw_text = read_annotation_text(path)
         data = json.loads(raw_text)
         centroids = parse_geojson_centroids_from_payload(data)
     elif lower.endswith(".json"):
-        raw_text = _read_annotation_text(path)
+        raw_text = read_annotation_text(path)
         data = json.loads(raw_text)
-        is_histoplus_dict = isinstance(data, dict) and (
-            "cell_masks" in data or "cellMasks" in data
+        centroids = load_centroids_from_json(
+            path=path,
+            data=data,
+            slide_path=slide_path,
+            progress=False,
         )
-        is_histoplus_list = isinstance(data, list) and any(
-            isinstance(item, dict) and ("masks" in item or "cell_masks" in item or "cells" in item)
-            for item in data
-        )
-        if is_histoplus_dict or is_histoplus_list:
-            if slide_path is None:
-                raise ValueError("slide_path must be provided for HistoPLUS JSON annotations.")
-            from .histoplus import histoplus_centroids_from_payload
-
-            if is_histoplus_dict:
-                cell_masks = data.get("cell_masks") or data.get("cellMasks") or []
-            else:
-                cell_masks = data
-            assert isinstance(cell_masks, list), "cell_masks must be a list for HistoPLUS conversion."
-            centroids = histoplus_centroids_from_payload(
-                cell_masks=cell_masks,
-                slide_path=slide_path,
-                apply_bounds_offset=False,
-                progress=False,
-            )
-        else:
-            centroids = parse_json_centroids_from_payload(data)
     elif lower.endswith(".xml"):
         centroids = parse_xml_centroids(path)
     else:
@@ -332,12 +195,12 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
     if not centroids:
         summary = ""
         if lower.endswith((".json", ".geojson")):
-            summary = f" Payload summary: {_summarize_annotation_payload(data)}."
+            summary = f" Payload summary: {summarize_annotation_payload(data)}."
         if raw_text is None and lower.endswith(".xml"):
-            raw_text = _read_annotation_text(path)
+            raw_text = read_annotation_text(path)
         payload_text = ""
         if raw_text is not None:
-            payload_text = f"\nAnnotation payload:\n{_truncate_payload(raw_text)}"
+            payload_text = f"\nAnnotation payload:\n{truncate_payload(raw_text)}"
         logger.warning(
             "No centroids parsed from %s (format=%s).%s%s",
             path,
@@ -345,6 +208,13 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
             summary,
             payload_text,
         )
+
+    if slide_path is not None:
+        try:
+            geometry = get_slide_geometry(slide_path)
+            centroids = filter_centroids_to_bounds(centroids, geometry)
+        except Exception as exc:  # noqa: BLE001 - OpenSlide failure should not stop parsing.
+            logger.warning("Failed to validate centroids against slide bounds: %s", exc)
 
     _write_centroid_cache(cache_path, centroids)
     logger.info(
@@ -527,7 +397,13 @@ class WSICellMoCoIterable(IterableDataset):
         self.aug = build_lemon_a1_gray_transform(img_size=out_size)
 
         self.centroids: Dict[str, List[Tuple[float, float]]] = {}
-        for entry in entries:
+        try:
+            from tqdm.auto import tqdm
+
+            entry_iter = tqdm(entries, desc="Loading centroids", unit="slide")
+        except Exception:  # noqa: BLE001 - tqdm is optional at runtime.
+            entry_iter = entries
+        for entry in entry_iter:
             self.centroids[entry.slide_id] = load_centroids(entry.ann_path, slide_path=entry.wsi_path)
         self.valid_entries = [entry for entry in entries if self.centroids.get(entry.slide_id)]
         for entry in entries:

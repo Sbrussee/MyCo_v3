@@ -72,6 +72,23 @@ def _coerce_point(point: object) -> Optional[Tuple[float, float]]:
     return None
 
 
+def _infer_tile_origin_mode(item: dict) -> str:
+    """Infer whether tile origins are indices or pixel offsets."""
+    unit = str(item.get("tile_unit") or item.get("tile_units") or item.get("units") or "").lower()
+    if "pixel" in unit:
+        return "pixel"
+    x_val = item.get("x", item.get("tile_x", item.get("tile_col", 0)))
+    y_val = item.get("y", item.get("tile_y", item.get("tile_row", 0)))
+    try:
+        x_float = float(x_val)
+        y_float = float(y_val)
+    except (TypeError, ValueError):
+        return "index"
+    if not x_float.is_integer() or not y_float.is_integer():
+        return "pixel"
+    return "index"
+
+
 def _iter_global_centroids(
     cell_masks: List[dict],
     dz,
@@ -112,15 +129,23 @@ def _iter_global_centroids(
     for item in iterator:
         if not isinstance(item, dict):
             continue
-        tile_x = float(item.get("x", 0))
-        tile_y = float(item.get("y", 0))
+        tile_x = float(item.get("x", item.get("tile_x", item.get("tile_col", 0))))
+        tile_y = float(item.get("y", item.get("tile_y", item.get("tile_row", 0))))
         dz_level = int(item.get("level", 0))
         assert dz_level >= 0, "DeepZoom level must be non-negative."
-        tile_col = int(tile_x)
-        tile_row = int(tile_y)
-
-        tile_info = _deepzoom_tile_origin_and_scale(dz, tile_col, tile_row, dz_level)
-        if tile_info is None:
+        tile_mode = _infer_tile_origin_mode(item)
+        if tile_mode == "index":
+            tile_col = int(round(tile_x))
+            tile_row = int(round(tile_y))
+            tile_info = _deepzoom_tile_origin_and_scale(dz, tile_col, tile_row, dz_level)
+            if tile_info is None:
+                tile_info = _pixel_tile_origin_and_scale(
+                    tile_x=tile_x,
+                    tile_y=tile_y,
+                    level=dz_level,
+                    level_downsamples=level_downsamples,
+                )
+        else:
             tile_info = _pixel_tile_origin_and_scale(
                 tile_x=tile_x,
                 tile_y=tile_y,
@@ -135,6 +160,7 @@ def _iter_global_centroids(
         if mask_payload is None:
             mask_payload = (
                 item.get("cell_masks")
+                or item.get("cellMasks")
                 or item.get("cells")
                 or item.get("objects")
                 or item.get("instances")
@@ -145,6 +171,8 @@ def _iter_global_centroids(
             if not isinstance(mask, dict):
                 continue
             centroid = _coerce_point(mask.get("centroid"))
+            if centroid is None:
+                centroid = _coerce_point(mask.get("center"))
             if centroid is None:
                 centroid = _centroid_from_coordinates(mask.get("coordinates", []))
             if centroid is None:
