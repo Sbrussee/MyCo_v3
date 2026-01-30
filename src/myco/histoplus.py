@@ -114,9 +114,10 @@ def _iter_global_centroids(
             continue
         tile_x = float(item.get("x", 0))
         tile_y = float(item.get("y", 0))
+        dz_level = int(item.get("level", 0))
+        assert dz_level >= 0, "DeepZoom level must be non-negative."
         tile_col = int(tile_x)
         tile_row = int(tile_y)
-        dz_level = int(item.get("level", 0))
 
         tile_info = _deepzoom_tile_origin_and_scale(dz, tile_col, tile_row, dz_level)
         if tile_info is None:
@@ -132,7 +133,12 @@ def _iter_global_centroids(
 
         mask_payload = item.get("masks")
         if mask_payload is None:
-            mask_payload = item.get("cell_masks") or item.get("cells") or item.get("objects")
+            mask_payload = (
+                item.get("cell_masks")
+                or item.get("cells")
+                or item.get("objects")
+                or item.get("instances")
+            )
         if not isinstance(mask_payload, list):
             continue
         for mask in mask_payload:
@@ -143,6 +149,7 @@ def _iter_global_centroids(
                 centroid = _centroid_from_coordinates(mask.get("coordinates", []))
             if centroid is None:
                 continue
+            assert len(centroid) == 2, "Centroid must be a 2D (x, y) point."
             local_x, local_y = centroid
             assert isinstance(local_x, float), "Centroid x must be numeric."
             assert isinstance(local_y, float), "Centroid y must be numeric."
@@ -168,7 +175,14 @@ def histoplus_centroids_from_payload(
     Parameters
     ----------
     cell_masks : list[dict]
-        Parsed HistoPLUS cell mask payload. Each entry contains tile metadata and masks.
+        Parsed HistoPLUS cell mask payload.
+        Each entry contains tile metadata:
+          - x, y (tile indices at the DeepZoom level)
+          - level (DeepZoom level index)
+          - width, height (tile size in pixels)
+        Each entry has a ``masks`` list with dicts that include:
+          - centroid: [x, y] in tile-local DeepZoom coordinates or
+          - coordinates: list[[x, y], ...] polygon vertices in tile-local DeepZoom coordinates.
     slide_path : str
         Path to the WSI used for coordinate conversion.
     tile_size : int, optional

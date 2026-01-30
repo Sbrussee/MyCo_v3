@@ -37,6 +37,33 @@ def test_load_centroids_histoplus_json_uses_converter(tmp_path: Path, monkeypatc
     assert captured["progress"] is False
 
 
+def test_load_centroids_histoplus_json_with_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    json_path = tmp_path / "histoplus.json"
+    json_path.write_text(
+        json.dumps(
+            {
+                "model_name": "histoplus_v1",
+                "inference_mpp": 0.25,
+                "cell_masks": [{"width": 224, "height": 224, "masks": [{"centroid": [1, 2]}]}],
+            }
+        )
+    )
+
+    captured = {}
+
+    def fake_converter(*, cell_masks, slide_path, apply_bounds_offset, progress):
+        captured["cell_masks"] = cell_masks
+        captured["slide_path"] = slide_path
+        return [(5.0, 6.0)]
+
+    monkeypatch.setattr("myco.histoplus.histoplus_centroids_from_payload", fake_converter)
+
+    centroids = load_centroids(str(json_path), slide_path="slide.svs")
+    assert centroids == [(5.0, 6.0)]
+    assert captured["slide_path"] == "slide.svs"
+    assert captured["cell_masks"][0]["width"] == 224
+
+
 def test_histoplus_centroids_from_payload_basic(monkeypatch: pytest.MonkeyPatch) -> None:
     openslide = pytest.importorskip("openslide")
 
