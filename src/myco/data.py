@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader, IterableDataset
 logger = logging.getLogger(__name__)
 
 
-
 @dataclass(frozen=True)
 class SlideEntry:
     """Reference to a WSI and its annotation file."""
@@ -24,6 +23,14 @@ class SlideEntry:
     slide_id: str
     wsi_path: str
     ann_path: str
+
+
+@dataclass(frozen=True)
+class DebugSampleConfig:
+    """Configuration for saving debug samples from the data pipeline."""
+
+    output_dir: Path
+    max_samples: int = 0
 
 
 def read_slide_labels(path: str) -> Dict[str, int]:
@@ -220,6 +227,18 @@ def _summarize_annotation_payload(data: object) -> str:
     return f"type={type(data).__name__}"
 
 
+def _summarize_centroids(centroids: List[Tuple[float, float]]) -> str:
+    """Summarize centroid coordinates for logging."""
+    if not centroids:
+        return "count=0"
+    xs = [coord[0] for coord in centroids]
+    ys = [coord[1] for coord in centroids]
+    return (
+        f"count={len(centroids)} x_range=({min(xs):.2f},{max(xs):.2f}) "
+        f"y_range=({min(ys):.2f},{max(ys):.2f})"
+    )
+
+
 def _truncate_payload(payload: str, limit: int = 50000) -> str:
     """Truncate payload strings to avoid excessive logging."""
     assert limit > 0, "limit must be positive."
@@ -328,6 +347,12 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         )
 
     _write_centroid_cache(cache_path, centroids)
+    logger.info(
+        "Parsed centroids from %s (format=%s, %s).",
+        path,
+        Path(path).suffix,
+        _summarize_centroids(centroids),
+    )
     return centroids
 
 
@@ -341,7 +366,9 @@ def _read_centroid_cache(path: Path) -> List[Tuple[float, float]]:
     """Read cached centroid coordinates from disk."""
     with open(path, "r", encoding="utf-8") as handle:
         cached = json.load(handle)
-    return [(float(item[0]), float(item[1])) for item in cached]
+    centroids = [(float(item[0]), float(item[1])) for item in cached]
+    logger.info("Loaded cached centroids from %s (%s).", path, _summarize_centroids(centroids))
+    return centroids
 
 
 def _write_centroid_cache(path: Path, centroids: List[Tuple[float, float]]) -> None:
@@ -361,6 +388,63 @@ def safe_open_slide(wsi_path: str):
     return openslide.OpenSlide(wsi_path)
 
 
+def _save_debug_sample(
+    config: DebugSampleConfig,
+    sample_idx: int,
+    entry: SlideEntry,
+    center: Tuple[float, float],
+    patch,
+    view1,
+    view2,
+    out_size: int,
+    big_size: int,
+) -> None:
+    """Save debug images + metadata for a sampled patch."""
+    import torch
+    from torchvision.transforms.functional import to_pil_image
+
+    assert config.max_samples >= 0, "max_samples must be non-negative."
+    assert patch.size == (big_size, big_size), f"Expected patch size {(big_size, big_size)}."
+    assert isinstance(view1, torch.Tensor), "view1 must be a torch.Tensor."
+    assert isinstance(view2, torch.Tensor), "view2 must be a torch.Tensor."
+    assert view1.shape == view2.shape, "Debug views must match shapes."
+    assert view1.shape[-2:] == (out_size, out_size), "Unexpected debug view size."
+
+    safe_slide_id = entry.slide_id.replace(os.sep, "_")
+    sample_prefix = f"{safe_slide_id}_sample_{sample_idx:04d}"
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    patch_path = config.output_dir / f"{sample_prefix}_patch.png"
+    view1_path = config.output_dir / f"{sample_prefix}_view1.png"
+    view2_path = config.output_dir / f"{sample_prefix}_view2.png"
+    metadata_path = config.output_dir / f"{sample_prefix}_meta.json"
+
+    patch.save(patch_path)
+    to_pil_image(view1.detach().cpu().clamp(0, 1)).save(view1_path)
+    to_pil_image(view2.detach().cpu().clamp(0, 1)).save(view2_path)
+
+    metadata = {
+        "slide_id": entry.slide_id,
+        "wsi_path": entry.wsi_path,
+        "ann_path": entry.ann_path,
+        "center": [float(center[0]), float(center[1])],
+        "patch_size": [int(big_size), int(big_size)],
+        "view_shape": list(view1.shape),
+        "patch_path": str(patch_path),
+        "view1_path": str(view1_path),
+        "view2_path": str(view2_path),
+    }
+    with open(metadata_path, "w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, indent=2)
+
+    logger.info(
+        "Saved debug sample %d for slide %s to %s.",
+        sample_idx,
+        entry.slide_id,
+        config.output_dir,
+    )
+
+
 def build_entries_from_dirs(
     wsi_dir: str,
     ann_dir: str,
@@ -375,12 +459,14 @@ def build_entries_from_dirs(
         wsis.extend(wsi_dir_path.glob(f"*{ext}"))
     if not wsis:
         raise RuntimeError(f"No WSIs found in {wsi_dir} with extensions {wsi_exts}")
+    logger.info("Found %d WSI files in %s.", len(wsis), wsi_dir)
 
     wsi_map = {path.stem: path for path in wsis}
     annotations = list(ann_dir_path.glob("*.xml"))
     annotations += list(ann_dir_path.glob("*.geojson"))
     annotations += list(ann_dir_path.glob("*.json"))
     ann_map = {path.stem: path for path in annotations}
+    logger.info("Found %d annotation files in %s.", len(annotations), ann_dir)
 
     entries: List[SlideEntry] = []
     for stem, wsi_path in wsi_map.items():
@@ -389,8 +475,28 @@ def build_entries_from_dirs(
             continue
         entries.append(SlideEntry(slide_id=stem, wsi_path=str(wsi_path), ann_path=str(ann_path)))
 
+    unmatched_wsi = sorted(set(wsi_map.keys()) - set(ann_map.keys()))
+    unmatched_ann = sorted(set(ann_map.keys()) - set(wsi_map.keys()))
+    for stem in unmatched_wsi:
+        logger.info("No annotation found for WSI stem %s.", stem)
+    for stem in unmatched_ann:
+        logger.info("No WSI found for annotation stem %s.", stem)
+
     if not entries:
         raise RuntimeError("No matched WSI/annotation pairs by stem name.")
+    logger.info(
+        "Matched %d WSI/annotation pairs (wsi_dir=%s ann_dir=%s).",
+        len(entries),
+        wsi_dir,
+        ann_dir,
+    )
+    for entry in entries:
+        logger.info(
+            "Entry matched: slide_id=%s wsi_path=%s ann_path=%s",
+            entry.slide_id,
+            entry.wsi_path,
+            entry.ann_path,
+        )
     return entries
 
 
@@ -404,6 +510,7 @@ class WSICellMoCoIterable(IterableDataset):
         seed: int,
         out_size: int = 40,
         big_size: int = 60,
+        debug_config: Optional[DebugSampleConfig] = None,
     ) -> None:
         super().__init__()
         self.all_entries = entries
@@ -411,6 +518,8 @@ class WSICellMoCoIterable(IterableDataset):
         self.seed = seed
         self.out_size = out_size
         self.big_size = big_size
+        self.debug_config = debug_config
+        self._debug_count = 0
 
         from .augment import RotationCrop40, build_lemon_a1_gray_transform
 
@@ -421,6 +530,14 @@ class WSICellMoCoIterable(IterableDataset):
         for entry in entries:
             self.centroids[entry.slide_id] = load_centroids(entry.ann_path, slide_path=entry.wsi_path)
         self.valid_entries = [entry for entry in entries if self.centroids.get(entry.slide_id)]
+        for entry in entries:
+            logger.info(
+                "Centroid summary for slide_id=%s wsi_path=%s ann_path=%s: %s",
+                entry.slide_id,
+                entry.wsi_path,
+                entry.ann_path,
+                _summarize_centroids(self.centroids.get(entry.slide_id, [])),
+            )
         total_centroids = sum(len(self.centroids.get(entry.slide_id, [])) for entry in entries)
         logger.info(
             "WSI dataset initialized with %d entries (%d with centroids, %d total centroids).",
@@ -470,6 +587,9 @@ class WSICellMoCoIterable(IterableDataset):
             finally:
                 slide.close()
 
+            assert patch.size == (self.big_size, self.big_size), (
+                f"Expected patch size {(self.big_size, self.big_size)}, got {patch.size}."
+            )
             img40 = self.rotcrop(patch)
             view1 = self.aug(img40)
             view2 = self.aug(img40)
@@ -481,6 +601,25 @@ class WSICellMoCoIterable(IterableDataset):
             assert view1.shape[-2:] == expected_hw, (
                 f"Expected HxW {expected_hw}, got {tuple(view1.shape[-2:])}."
             )
+            if (
+                self.debug_config is not None
+                and self.debug_config.max_samples > 0
+                and self._debug_count < self.debug_config.max_samples
+                and worker_id == 0
+                and rank == 0
+            ):
+                _save_debug_sample(
+                    self.debug_config,
+                    self._debug_count,
+                    entry,
+                    center,
+                    patch,
+                    view1,
+                    view2,
+                    self.out_size,
+                    self.big_size,
+                )
+                self._debug_count += 1
             yield view1, view2
 
 
@@ -488,7 +627,13 @@ class CellDataModule(PLDataModule):
     """Lightning DataModule for nucleus crop sampling."""
 
     def __init__(
-        self, entries: List[SlideEntry], epoch_length: int, batch_size: int, num_workers: int, seed: int
+        self,
+        entries: List[SlideEntry],
+        epoch_length: int,
+        batch_size: int,
+        num_workers: int,
+        seed: int,
+        debug_config: Optional[DebugSampleConfig] = None,
     ) -> None:
         super().__init__()
         assert isinstance(entries, list), "entries must be a list of SlideEntry objects."
@@ -501,9 +646,15 @@ class CellDataModule(PLDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.seed = seed
+        self.debug_config = debug_config
 
     def train_dataloader(self) -> DataLoader:
-        dataset = WSICellMoCoIterable(self.entries, self.epoch_length, seed=self.seed)
+        dataset = WSICellMoCoIterable(
+            self.entries,
+            self.epoch_length,
+            seed=self.seed,
+            debug_config=self.debug_config,
+        )
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
