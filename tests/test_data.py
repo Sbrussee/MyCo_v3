@@ -2,10 +2,15 @@ import json
 import pytest
 from pathlib import Path
 
+import torch
+from PIL import Image
+
 from myco.data import (
     CellDataModule,
+    DebugSampleConfig,
     SlideEntry,
     WSICellMoCoIterable,
+    _save_debug_sample,
     build_entries_from_dirs,
     load_centroids,
     parse_xml_centroids,
@@ -155,3 +160,58 @@ def test_wsi_iterable_raises_without_centroids(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="No valid entries with centroids"):
         WSICellMoCoIterable(entries=entries, epoch_length=10, seed=0)
+
+
+def test_save_debug_sample(tmp_path: Path) -> None:
+    config = DebugSampleConfig(output_dir=tmp_path, max_samples=1)
+    entry = SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")
+    patch = Image.new("RGB", (60, 60), color=(255, 0, 0))
+    view1 = torch.zeros((3, 40, 40), dtype=torch.float32)
+    view2 = torch.ones((3, 40, 40), dtype=torch.float32)
+
+    _save_debug_sample(
+        config=config,
+        sample_idx=0,
+        entry=entry,
+        center=(10.0, 20.0),
+        patch=patch,
+        view1=view1,
+        view2=view2,
+        out_size=40,
+        big_size=60,
+    )
+
+    assert (tmp_path / "slide_1_sample_0000_patch.png").exists()
+    assert (tmp_path / "slide_1_sample_0000_view1.png").exists()
+    assert (tmp_path / "slide_1_sample_0000_view2.png").exists()
+    assert (tmp_path / "slide_1_sample_0000_meta.json").exists()
+
+
+def test_pipeline_smoke_with_dummy_slide(tmp_path: Path, monkeypatch) -> None:
+    wsi_dir = tmp_path / "wsis"
+    ann_dir = tmp_path / "anns"
+    wsi_dir.mkdir()
+    ann_dir.mkdir()
+
+    (wsi_dir / "slide_1.svs").write_text("fake")
+    (ann_dir / "slide_1.json").write_text(json.dumps({"centroids": [[15, 20], [30, 40]]}))
+
+    entries = build_entries_from_dirs(str(wsi_dir), str(ann_dir))
+
+    class DummySlide:
+        def read_region(self, _loc, _level, size):
+            return Image.new("RGB", size, color=(128, 128, 128))
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("myco.data.safe_open_slide", lambda _path: DummySlide())
+
+    datamodule = CellDataModule(entries=entries, epoch_length=2, batch_size=2, num_workers=0, seed=0)
+    loader = datamodule.train_dataloader()
+    batch = next(iter(loader))
+    view1, view2 = batch
+
+    assert view1.shape == view2.shape
+    assert view1.shape[0] == 2
+    assert view1.shape[1:] == (3, 40, 40)

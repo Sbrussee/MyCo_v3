@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from myco.callbacks import BatchMetricsLogger
-from myco.data import CellDataModule, build_entries_from_dirs, read_slide_labels
+from myco.data import CellDataModule, DebugSampleConfig, build_entries_from_dirs, read_slide_labels
 from myco.eval import EvalCallback, MosaicConfig, ProbeConfig
 from myco.model import MoCoV3Lit
 from myco.utils import seed_all
@@ -73,6 +73,17 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--precision", default="bf16-mixed")
     parser.add_argument("--devices", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--debug_dir",
+        default="",
+        help="Optional directory for saving debug samples (defaults to outdir/debug_samples).",
+    )
+    parser.add_argument(
+        "--debug_samples",
+        type=int,
+        default=5,
+        help="Number of debug samples to save from the data pipeline.",
+    )
 
     parser.add_argument("--probe_cells_per_slide", type=int, default=200)
     parser.add_argument("--probe_epochs", type=int, default=20)
@@ -125,8 +136,16 @@ def main() -> None:
     os.makedirs(args.outdir, exist_ok=True)
     seed_all(args.seed)
 
+    logger = logging.getLogger(__name__)
+    logger.info("Training configuration: %s", vars(args))
+
     entries = build_entries_from_dirs(args.wsi_dir, args.ann_dir)
     slide_labels = read_slide_labels(args.slide_labels)
+    logger.info("Loaded %d slide labels from %s.", len(slide_labels), args.slide_labels)
+    debug_dir = args.debug_dir or os.path.join(args.outdir, "debug_samples")
+    debug_config = None
+    if args.debug_samples > 0:
+        debug_config = DebugSampleConfig(output_dir=Path(debug_dir), max_samples=args.debug_samples)
 
     datamodule = CellDataModule(
         entries,
@@ -134,6 +153,7 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         seed=args.seed,
+        debug_config=debug_config,
     )
 
     world_size = max(1, args.devices)
@@ -152,7 +172,7 @@ def main() -> None:
         warmup_epochs=args.warmup_epochs,
     )
 
-    logger = build_logger(args.outdir)
+    trainer_logger = build_logger(args.outdir)
 
     probe_cfg = ProbeConfig(
         cells_per_slide=args.probe_cells_per_slide,
@@ -187,7 +207,7 @@ def main() -> None:
         callbacks=build_callbacks(args.outdir, eval_cb, args.log_every_n_batches),
         log_every_n_steps=args.log_every_n_batches,
         enable_checkpointing=True,
-        logger=logger,
+        logger=trainer_logger,
     )
 
     trainer.fit(model, datamodule=datamodule)
