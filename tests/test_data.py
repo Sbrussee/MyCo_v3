@@ -16,6 +16,7 @@ from myco.data import (
     parse_xml_centroids,
     read_slide_labels,
 )
+from myco.annotations import SlideGeometry
 
 
 def test_read_slide_labels_csv(tmp_path: Path) -> None:
@@ -105,6 +106,52 @@ def test_load_centroids_json_detections_key(tmp_path: Path) -> None:
     json_path.write_text(json.dumps({"detections": [{"x": 11, "y": 12}]}))
     coords = load_centroids(str(json_path))
     assert coords == [(11.0, 12.0)]
+
+
+def test_load_centroids_json_level_remap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    json_path = tmp_path / "ann.json"
+    json_path.write_text(json.dumps({"level": 1, "centroids": [[10, 20]]}))
+
+    geometry = SlideGeometry(
+        width=1000,
+        height=1000,
+        level_downsamples=(1.0, 4.0),
+        bounds_x=0,
+        bounds_y=0,
+        bounds_width=1000,
+        bounds_height=1000,
+        mpp_x=None,
+        mpp_y=None,
+    )
+
+    monkeypatch.setattr("myco.annotations.get_slide_geometry", lambda _: geometry)
+    monkeypatch.setattr("myco.data.get_slide_geometry", lambda _: geometry)
+
+    coords = load_centroids(str(json_path), slide_path="slide.svs")
+    assert coords == [(40.0, 80.0)]
+
+
+def test_load_centroids_filters_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    json_path = tmp_path / "ann.json"
+    json_path.write_text(json.dumps({"centroids": [[5, 5], [500, 500]]}))
+
+    geometry = SlideGeometry(
+        width=100,
+        height=100,
+        level_downsamples=(1.0,),
+        bounds_x=0,
+        bounds_y=0,
+        bounds_width=100,
+        bounds_height=100,
+        mpp_x=None,
+        mpp_y=None,
+    )
+
+    monkeypatch.setattr("myco.annotations.get_slide_geometry", lambda _: geometry)
+    monkeypatch.setattr("myco.data.get_slide_geometry", lambda _: geometry)
+
+    coords = load_centroids(str(json_path), slide_path="slide.svs")
+    assert coords == [(5.0, 5.0)]
 
 
 def test_build_entries_from_dirs(tmp_path: Path) -> None:
