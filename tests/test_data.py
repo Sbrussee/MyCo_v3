@@ -40,6 +40,13 @@ def test_read_slide_labels_json(tmp_path: Path) -> None:
     assert labels == {"slide_1": 1, "slide_2": 0}
 
 
+def test_read_slide_labels_json_single_entry(tmp_path: Path) -> None:
+    json_path = tmp_path / "labels.json"
+    json_path.write_text(json.dumps({"slide_id": "slide_1", "category": "MF"}))
+    labels = read_slide_labels(str(json_path))
+    assert labels == {"slide_1": 1}
+
+
 def test_parse_xml_centroids(tmp_path: Path) -> None:
     pytest.importorskip("lxml")
     xml_path = tmp_path / "ann.xml"

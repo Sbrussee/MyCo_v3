@@ -77,6 +77,15 @@ def read_slide_labels(path: str) -> Dict[str, int]:
             data = json.load(handle)
 
         output: Dict[str, int] = {}
+        if isinstance(data, dict):
+            sid_raw = data.get("slide_id") or data.get("slide")
+            label_raw = data.get("label") or data.get("category")
+            mapped = _map_label(label_raw)
+            if sid_raw is not None and mapped is not None:
+                sid = str(sid_raw).strip()
+                if sid:
+                    output[sid] = mapped
+                    return output
         # Support either {slide_id: label} or [{"slide_id": ..., "label": ...}, ...]
         if isinstance(data, dict):
             for slide_id, label_raw in data.items():
@@ -169,7 +178,7 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         WSI path required for HistoPLUS JSON annotations (tile-local coordinates).
     """
     cache_path = _centroid_cache_path(path)
-    if cache_path.exists():
+    if _centroid_cache_is_fresh(cache_path, path):
         return _read_centroid_cache(cache_path)
 
     lower = path.lower()
@@ -230,6 +239,18 @@ def _centroid_cache_path(path: str) -> Path:
     """Return the cache path used to store serialized centroids for an annotation."""
     ann_path = Path(path)
     return ann_path.with_suffix(ann_path.suffix + ".centroids.json")
+
+
+def _centroid_cache_is_fresh(cache_path: Path, ann_path: str) -> bool:
+    """Return True if a centroid cache exists and is newer than the annotation file."""
+    if not cache_path.exists():
+        return False
+    try:
+        cache_mtime = cache_path.stat().st_mtime
+        ann_mtime = Path(ann_path).stat().st_mtime
+    except OSError:
+        return False
+    return cache_mtime >= ann_mtime
 
 
 def _read_centroid_cache(path: Path) -> List[Tuple[float, float]]:
