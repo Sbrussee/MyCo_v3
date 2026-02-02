@@ -89,6 +89,80 @@ def _infer_tile_origin_mode(item: dict) -> str:
     return "index"
 
 
+def _tile_indices_in_bounds(dz, level: int, tile_col: int, tile_row: int) -> bool:
+    """Return True when tile indices fall within the DeepZoom grid for the level."""
+    try:
+        level_tiles = dz.level_tiles[level]
+    except (AttributeError, IndexError, TypeError):
+        return True
+    if not level_tiles:
+        return True
+    max_cols, max_rows = level_tiles
+    return 0 <= tile_col < int(max_cols) and 0 <= tile_row < int(max_rows)
+
+
+def _centroid_from_coordinates(coords: Iterable[Iterable[float]]) -> Optional[Tuple[float, float]]:
+    """Compute a centroid from polygon coordinates."""
+    coord_list = list(coords)
+    if not coord_list:
+        return None
+    xs: List[float] = []
+    ys: List[float] = []
+    for coord in coord_list:
+        pair = _coerce_point(coord)
+        if pair is None:
+            continue
+        xs.append(pair[0])
+        ys.append(pair[1])
+    if not xs or not ys:
+        return None
+    assert len(xs) == len(ys), "Coordinate pairs must have matching x/y lengths."
+    return sum(xs) / len(xs), sum(ys) / len(ys)
+
+
+def _iter_centroids_from_cell_masks(
+    cell_masks: List[dict],
+    *,
+    progress: bool,
+) -> Iterable[Tuple[float, float]]:
+    """Yield centroids already expressed in slide-level coordinates."""
+    iterator = cell_masks
+    if progress:
+        iterator = tqdm(iterator, desc="Loading HistoPLUS centroids", unit="tile")
+
+    for item in iterator:
+        if not isinstance(item, dict):
+            continue
+        mask_payload = item.get("masks")
+        if mask_payload is None:
+            mask_payload = (
+                item.get("cell_masks")
+                or item.get("cellMasks")
+                or item.get("cells")
+                or item.get("objects")
+                or item.get("instances")
+            )
+        if mask_payload is None and ("centroid" in item or "coordinates" in item or "center" in item):
+            mask_payload = [item]
+        if not isinstance(mask_payload, list):
+            continue
+        for mask in mask_payload:
+            if not isinstance(mask, dict):
+                continue
+            centroid = _coerce_point(mask.get("centroid"))
+            if centroid is None:
+                centroid = _coerce_point(mask.get("center"))
+            if centroid is None:
+                centroid = _centroid_from_coordinates(mask.get("coordinates", []))
+            if centroid is None:
+                continue
+            assert len(centroid) == 2, "Centroid must be a 2D (x, y) point."
+            local_x, local_y = centroid
+            assert isinstance(local_x, float), "Centroid x must be numeric."
+            assert isinstance(local_y, float), "Centroid y must be numeric."
+            yield local_x, local_y
+
+
 def _iter_global_centroids(
     cell_masks: List[dict],
     dz,
@@ -107,25 +181,6 @@ def _iter_global_centroids(
     if progress:
         iterator = tqdm(iterator, desc="Remapping HistoPLUS centroids", unit="tile")
 
-    def _centroid_from_coordinates(
-        coords: Iterable[Iterable[float]],
-    ) -> Optional[Tuple[float, float]]:
-        coord_list = list(coords)
-        if not coord_list:
-            return None
-        xs: List[float] = []
-        ys: List[float] = []
-        for coord in coord_list:
-            pair = _coerce_point(coord)
-            if pair is None:
-                continue
-            xs.append(pair[0])
-            ys.append(pair[1])
-        if not xs or not ys:
-            return None
-        assert len(xs) == len(ys), "Coordinate pairs must have matching x/y lengths."
-        return sum(xs) / len(xs), sum(ys) / len(ys)
-
     for item in iterator:
         if not isinstance(item, dict):
             continue
@@ -137,7 +192,16 @@ def _iter_global_centroids(
         if tile_mode == "index":
             tile_col = int(round(tile_x))
             tile_row = int(round(tile_y))
-            tile_info = _deepzoom_tile_origin_and_scale(dz, tile_col, tile_row, dz_level)
+            if _tile_indices_in_bounds(dz, dz_level, tile_col, tile_row):
+                tile_info = _deepzoom_tile_origin_and_scale(dz, tile_col, tile_row, dz_level)
+            else:
+                logger.info(
+                    "Tile indices (%d, %d) exceed DeepZoom grid for level %d; treating as pixel offsets.",
+                    tile_col,
+                    tile_row,
+                    dz_level,
+                )
+                tile_info = None
             if tile_info is None:
                 tile_info = _pixel_tile_origin_and_scale(
                     tile_x=tile_x,
@@ -187,6 +251,29 @@ def _iter_global_centroids(
                 global_x -= offset_x
                 global_y -= offset_y
             yield global_x, global_y
+
+
+def histoplus_centroids_from_masks(
+    *,
+    cell_masks: List[dict],
+    progress: bool = False,
+) -> List[Tuple[float, float]]:
+    """Extract centroids from HistoPLUS cell masks already in global coordinates.
+
+    Parameters
+    ----------
+    cell_masks : list[dict]
+        HistoPLUS cell mask payload. Each entry may be a tile entry with a ``masks``
+        list or a direct mask object that already includes centroids.
+    progress : bool
+        Whether to show a tqdm progress bar.
+    """
+    if not cell_masks:
+        return []
+    assert isinstance(cell_masks, list), "cell_masks must be a list of dictionaries."
+    centroids = list(_iter_centroids_from_cell_masks(cell_masks, progress=progress))
+    logger.info("Loaded %d HistoPLUS centroids from global coordinates.", len(centroids))
+    return centroids
 
 
 def histoplus_centroids_from_payload(
