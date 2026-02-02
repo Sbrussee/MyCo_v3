@@ -380,6 +380,14 @@ def is_histoplus_payload(data: object) -> bool:
     return False
 
 
+def _histoplus_has_tile_metadata(cell_masks: List[dict]) -> bool:
+    """Return True if HistoPLUS cell masks include tile coordinate metadata."""
+    for region in cell_masks:
+        if isinstance(region, dict) and {"x", "y", "level"}.issubset(region.keys()):
+            return True
+    return False
+
+
 def parse_json_with_remap(
     *,
     data: object,
@@ -419,15 +427,24 @@ def load_centroids_from_json(
 ) -> List[Tuple[float, float]]:
     """Load centroids from JSON payloads, remapping when required."""
     if is_histoplus_payload(data):
-        if slide_path is None:
-            raise ValueError("slide_path must be provided for HistoPLUS JSON annotations.")
-        from .histoplus import histoplus_centroids_from_payload
+        from .histoplus import histoplus_centroids_from_masks, histoplus_centroids_from_payload
 
+        coordinate_space = data.get("coordinate_space") if isinstance(data, dict) else None
         if isinstance(data, dict):
             cell_masks = data.get("cell_masks") or data.get("cellMasks") or []
         else:
             cell_masks = data
         assert isinstance(cell_masks, list), "cell_masks must be a list for HistoPLUS conversion."
+        has_tile_metadata = _histoplus_has_tile_metadata(cell_masks)
+        if coordinate_space == "global" or (coordinate_space is None and not has_tile_metadata):
+            if coordinate_space is None and not has_tile_metadata:
+                logger.info(
+                    "HistoPLUS payload lacks tile metadata; assuming global coordinates."
+                )
+            return histoplus_centroids_from_masks(cell_masks=cell_masks, progress=progress)
+
+        if slide_path is None:
+            raise ValueError("slide_path must be provided for HistoPLUS JSON annotations.")
         return histoplus_centroids_from_payload(
             cell_masks=cell_masks,
             slide_path=slide_path,
