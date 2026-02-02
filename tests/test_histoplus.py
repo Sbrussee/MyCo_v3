@@ -68,6 +68,87 @@ def test_load_centroids_histoplus_json_with_metadata(tmp_path: Path, monkeypatch
     assert centroids == [(1.0, 2.0)]
 
 
+def test_load_centroids_histoplus_real_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    openslide = pytest.importorskip("openslide")
+
+    class FakeSlide:
+        properties = {"openslide.bounds-x": "0", "openslide.bounds-y": "0"}
+        level_downsamples = [float(2**i) for i in range(15)]
+
+        def close(self) -> None:
+            return None
+
+    class FakeDeepZoomGenerator:
+        def __init__(self, slide, tile_size: int, overlap: int, limit_bounds: bool) -> None:
+            del slide, overlap, limit_bounds
+            self.tile_size = tile_size
+            self.level_count = 15
+
+        def get_tile_coordinates(self, level: int, address: tuple[int, int]):
+            tile_col, tile_row = address
+            level_scale = 2 ** (self.level_count - 1 - level)
+            return (
+                (tile_col * self.tile_size * level_scale, tile_row * self.tile_size * level_scale),
+                None,
+                None,
+            )
+
+    monkeypatch.setattr(openslide, "OpenSlide", lambda _: FakeSlide())
+    monkeypatch.setattr(openslide.deepzoom, "DeepZoomGenerator", FakeDeepZoomGenerator)
+
+    payload = {
+        "model_name": "histoplus_cellvit_segmentor_20x",
+        "inference_mpp": 0.5,
+        "cell_masks": [
+            {
+                "level": 14.0,
+                "x": 28.0,
+                "y": 25.0,
+                "width": 224.0,
+                "height": 224.0,
+                "masks": [
+                    {
+                        "cell_id": 0.0,
+                        "cell_type": "Cancer cell",
+                        "confidence": 0.9999999843750003,
+                        "coordinates": [
+                            [123.0, 7.0],
+                            [120.0, 10.0],
+                        ],
+                        "centroid": [123.0, 12.0],
+                    },
+                    {
+                        "cell_id": 1.0,
+                        "cell_type": "Cancer cell",
+                        "confidence": 0.9999999879518074,
+                        "coordinates": [
+                            [158.0, 7.0],
+                            [156.0, 9.0],
+                        ],
+                        "centroid": [160.0, 11.0],
+                    },
+                    {
+                        "cell_id": 2.0,
+                        "cell_type": "Epithelial",
+                        "confidence": 0.8999999850000003,
+                        "coordinates": [
+                            [-2.0, 10.0],
+                            [0.0, 10.0],
+                        ],
+                        "centroid": [0.0, 14.0],
+                    },
+                ],
+            }
+        ],
+    }
+
+    json_path = tmp_path / "histoplus.json"
+    json_path.write_text(json.dumps(payload))
+
+    centroids = load_centroids(str(json_path), slide_path="slide.svs")
+    assert centroids == [(6395.0, 5612.0), (6432.0, 5611.0), (6272.0, 5614.0)]
+
+
 def test_load_centroids_histoplus_json_skips_remap_for_global_coordinate_space(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
