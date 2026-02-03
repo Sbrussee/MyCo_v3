@@ -1,11 +1,11 @@
 """Annotation parsing and coordinate remapping utilities."""
+
 from __future__ import annotations
 
 import json
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,9 @@ def _coerce_centroid(item: object) -> Optional[Tuple[float, float]]:
     return None
 
 
-def _append_centroids(coords: List[Tuple[float, float]], items: Iterable[object]) -> None:
+def _append_centroids(
+    coords: List[Tuple[float, float]], items: Iterable[object]
+) -> None:
     for item in items:
         centroid = _coerce_centroid(item)
         if centroid is None and isinstance(item, dict):
@@ -141,7 +143,9 @@ def _append_centroids(coords: List[Tuple[float, float]], items: Iterable[object]
         coords.append((float(centroid[0]), float(centroid[1])))
 
 
-def parse_geojson_centroids_from_payload(data: Dict[str, object]) -> List[Tuple[float, float]]:
+def parse_geojson_centroids_from_payload(
+    data: Dict[str, object],
+) -> List[Tuple[float, float]]:
     coords: List[Tuple[float, float]] = []
     if not isinstance(data, dict):
         return coords
@@ -171,7 +175,9 @@ def parse_geojson_centroids_from_payload(data: Dict[str, object]) -> List[Tuple[
                 if isinstance(point, (list, tuple)) and len(point) >= 2:
                     coords.append((float(point[0]), float(point[1])))
             else:
-                logger.warning("Shapely unavailable; skipping non-point GeoJSON geometry.")
+                logger.warning(
+                    "Shapely unavailable; skipping non-point GeoJSON geometry."
+                )
     return coords
 
 
@@ -252,15 +258,25 @@ def _extract_transform_from_metadata(
             scale_y = scale if scale_y is None else scale_y
 
     downsample = _maybe_float(lookup.get("downsample"))
-    level = lookup.get("level") or lookup.get("slide_level") or lookup.get("level_index")
-    level_idx = int(level) if isinstance(level, (int, float, str)) and str(level).isdigit() else None
+    level = (
+        lookup.get("level") or lookup.get("slide_level") or lookup.get("level_index")
+    )
+    level_idx = (
+        int(level)
+        if isinstance(level, (int, float, str)) and str(level).isdigit()
+        else None
+    )
 
     if scale_x is None or scale_y is None:
         if downsample is not None:
             scale_x = downsample if scale_x is None else scale_x
             scale_y = downsample if scale_y is None else scale_y
 
-    if (scale_x is None or scale_y is None) and level_idx is not None and slide_geometry is not None:
+    if (
+        (scale_x is None or scale_y is None)
+        and level_idx is not None
+        and slide_geometry is not None
+    ):
         if 0 <= level_idx < len(slide_geometry.level_downsamples):
             ds = slide_geometry.level_downsamples[level_idx]
             scale_x = ds if scale_x is None else scale_x
@@ -313,7 +329,9 @@ def apply_coordinate_transform(
     coords = np.asarray(centroids, dtype=np.float64)
     assert coords.ndim == 2 and coords.shape[1] == 2, "Centroids must be shaped (N, 2)."
     scaled = coords * np.array([transform.scale_x, transform.scale_y], dtype=np.float64)
-    shifted = scaled + np.array([transform.offset_x, transform.offset_y], dtype=np.float64)
+    shifted = scaled + np.array(
+        [transform.offset_x, transform.offset_y], dtype=np.float64
+    )
     return [(float(x), float(y)) for x, y in shifted]
 
 
@@ -374,7 +392,8 @@ def is_histoplus_payload(data: object) -> bool:
         return "cell_masks" in data or "cellMasks" in data
     if isinstance(data, list):
         return any(
-            isinstance(item, dict) and ("masks" in item or "cell_masks" in item or "cells" in item)
+            isinstance(item, dict)
+            and ("masks" in item or "cell_masks" in item or "cells" in item)
             for item in data
         )
     return False
@@ -405,7 +424,12 @@ def parse_json_with_remap(
             except Exception as exc:  # noqa: BLE001 - OpenSlide may be unavailable in tests.
                 logger.warning("Failed to load slide geometry for remapping: %s", exc)
         transform = _extract_transform_from_metadata(data, geometry)
-        if transform.scale_x != 1.0 or transform.scale_y != 1.0 or transform.offset_x != 0.0 or transform.offset_y != 0.0:
+        if (
+            transform.scale_x != 1.0
+            or transform.scale_y != 1.0
+            or transform.offset_x != 0.0
+            or transform.offset_y != 0.0
+        ):
             centroids = apply_coordinate_transform(centroids, transform)
             logger.info(
                 "Applied coordinate transform (%s): scale=(%.3f, %.3f) offset=(%.1f, %.1f).",
@@ -427,24 +451,37 @@ def load_centroids_from_json(
 ) -> List[Tuple[float, float]]:
     """Load centroids from JSON payloads, remapping when required."""
     if is_histoplus_payload(data):
-        from .histoplus import histoplus_centroids_from_masks, histoplus_centroids_from_payload
+        from .histoplus import (
+            histoplus_centroids_from_masks,
+            histoplus_centroids_from_payload,
+        )
 
-        coordinate_space = data.get("coordinate_space") if isinstance(data, dict) else None
+        coordinate_space = (
+            data.get("coordinate_space") if isinstance(data, dict) else None
+        )
         if isinstance(data, dict):
             cell_masks = data.get("cell_masks") or data.get("cellMasks") or []
         else:
             cell_masks = data
-        assert isinstance(cell_masks, list), "cell_masks must be a list for HistoPLUS conversion."
+        assert isinstance(cell_masks, list), (
+            "cell_masks must be a list for HistoPLUS conversion."
+        )
         has_tile_metadata = _histoplus_has_tile_metadata(cell_masks)
-        if coordinate_space == "global" or (coordinate_space is None and not has_tile_metadata):
+        if coordinate_space == "global" or (
+            coordinate_space is None and not has_tile_metadata
+        ):
             if coordinate_space is None and not has_tile_metadata:
                 logger.info(
                     "HistoPLUS payload lacks tile metadata; assuming global coordinates."
                 )
-            return histoplus_centroids_from_masks(cell_masks=cell_masks, progress=progress)
+            return histoplus_centroids_from_masks(
+                cell_masks=cell_masks, progress=progress
+            )
 
         if slide_path is None:
-            raise ValueError("slide_path must be provided for HistoPLUS JSON annotations.")
+            raise ValueError(
+                "slide_path must be provided for HistoPLUS JSON annotations."
+            )
         return histoplus_centroids_from_payload(
             cell_masks=cell_masks,
             slide_path=slide_path,

@@ -13,8 +13,8 @@ from pytorch_lightning.loggers import CSVLogger
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import train_model
-from myco.callbacks import BatchMetricsLogger
+import train_model  # noqa: E402
+from myco.callbacks import BatchMetricsLogger  # noqa: E402
 
 
 def test_build_logger_uses_csv(tmp_path):
@@ -26,7 +26,9 @@ def test_build_logger_uses_csv(tmp_path):
 
 def test_build_callbacks_includes_logging_and_checkpointing(tmp_path):
     eval_cb = pl.Callback()
-    callbacks = train_model.build_callbacks(str(tmp_path), eval_cb, log_every_n_batches=10)
+    callbacks = train_model.build_callbacks(
+        str(tmp_path), eval_cb, log_every_n_batches=10
+    )
     callback_types = {type(cb) for cb in callbacks}
 
     assert eval_cb in callbacks

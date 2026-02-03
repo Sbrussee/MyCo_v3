@@ -5,6 +5,7 @@ Training entrypoint for MoCo v3 on nuclei crops.
 This script wires data, model, and evaluation callbacks together for
 self-supervised training with PyTorch Lightning.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,11 +29,16 @@ from pytorch_lightning.strategies import DDPStrategy
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from myco.callbacks import BatchMetricsLogger
-from myco.data import CellDataModule, DebugSampleConfig, build_entries_from_dirs, read_slide_labels
-from myco.eval import EvalCallback, MosaicConfig, ProbeConfig
-from myco.model import MoCoV3Lit
-from myco.utils import seed_all
+from myco.callbacks import BatchMetricsLogger  # noqa: E402
+from myco.data import (  # noqa: E402
+    CellDataModule,
+    DebugSampleConfig,
+    build_entries_from_dirs,
+    read_slide_labels,
+)
+from myco.eval import EvalCallback, MosaicConfig, ProbeConfig  # noqa: E402
+from myco.model import MoCoV3Lit  # noqa: E402
+from myco.utils import seed_all  # noqa: E402
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -124,7 +130,14 @@ def build_callbacks(
     device_monitor = DeviceStatsMonitor()
     progress_bar = TQDMProgressBar(refresh_rate=1)
     batch_logger = BatchMetricsLogger(log_every_n_batches=log_every_n_batches)
-    return [checkpoint_cb, eval_cb, lr_monitor, device_monitor, progress_bar, batch_logger]
+    return [
+        checkpoint_cb,
+        eval_cb,
+        lr_monitor,
+        device_monitor,
+        progress_bar,
+        batch_logger,
+    ]
 
 
 def main() -> None:
@@ -145,7 +158,9 @@ def main() -> None:
     debug_dir = args.debug_dir or os.path.join(args.outdir, "debug_samples")
     debug_config = None
     if args.debug_samples > 0:
-        debug_config = DebugSampleConfig(output_dir=Path(debug_dir), max_samples=args.debug_samples)
+        debug_config = DebugSampleConfig(
+            output_dir=Path(debug_dir), max_samples=args.debug_samples
+        )
 
     datamodule = CellDataModule(
         entries,
@@ -201,7 +216,9 @@ def main() -> None:
         max_epochs=args.epochs,
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         devices=args.devices,
-        strategy=DDPStrategy(find_unused_parameters=False) if args.devices > 1 else "auto",
+        strategy=DDPStrategy(find_unused_parameters=False)
+        if args.devices > 1
+        else "auto",
         precision=args.precision,
         accumulate_grad_batches=args.accum,
         callbacks=build_callbacks(args.outdir, eval_cb, args.log_every_n_batches),
