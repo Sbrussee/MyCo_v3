@@ -1,4 +1,5 @@
 """End-to-end pipeline check for centroid parsing and sampling."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,8 +14,8 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from myco.data import CellDataModule, SlideEntry, build_entries_from_dirs
-from myco.performance import log_performance_stats, measure_io_latency
+from myco.data import CellDataModule, SlideEntry, build_entries_from_dirs  # noqa: E402
+from myco.performance import log_performance_stats, measure_io_latency  # noqa: E402
 
 
 class DummySlide:
@@ -42,7 +43,9 @@ def run_pipeline_check() -> None:
         ann_dir.mkdir()
 
         (wsi_dir / "slide_1.svs").write_text("fake")
-        (ann_dir / "slide_1.json").write_text(json.dumps({"centroids": [[15, 20], [30, 40]]}))
+        (ann_dir / "slide_1.json").write_text(
+            json.dumps({"centroids": [[15, 20], [30, 40]]})
+        )
 
         entries = build_entries_from_dirs(str(wsi_dir), str(ann_dir))
         assert entries and isinstance(entries[0], SlideEntry)
@@ -51,7 +54,9 @@ def run_pipeline_check() -> None:
 
         data_mod.safe_open_slide = lambda _path: DummySlide()
 
-        datamodule = CellDataModule(entries=entries, epoch_length=2, batch_size=2, num_workers=0, seed=0)
+        datamodule = CellDataModule(
+            entries=entries, epoch_length=2, batch_size=2, num_workers=0, seed=0
+        )
         loader = datamodule.train_dataloader()
         batch = next(iter(loader))
         view1, view2 = batch
@@ -60,7 +65,9 @@ def run_pipeline_check() -> None:
         assert view1.shape[0] == 2
         assert view1.shape[1:] == (3, 40, 40)
 
-        timing = measure_io_latency(lambda: DummySlide().read_region((0, 0), 0, (60, 60)), samples=5)
+        timing = measure_io_latency(
+            lambda: DummySlide().read_region((0, 0), 0, (60, 60)), samples=5
+        )
         log_performance_stats("pipeline_check", timing)
 
         logger.info("Pipeline check completed successfully.")

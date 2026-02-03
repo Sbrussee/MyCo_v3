@@ -1,4 +1,5 @@
 """Dataset and IO utilities for WSI-centric nucleus cropping."""
+
 from __future__ import annotations
 
 import csv
@@ -17,9 +18,7 @@ from .annotations import (
     filter_centroids_to_bounds,
     get_slide_geometry,
     load_centroids_from_json,
-    parse_geojson_centroids,
     parse_geojson_centroids_from_payload,
-    parse_json_centroids_from_payload,
     parse_xml_centroids,
     read_annotation_text,
     summarize_annotation_payload,
@@ -58,6 +57,7 @@ def read_slide_labels(path: str) -> Dict[str, int]:
 
     Supports comma- or semicolon-separated CSV (auto-detected).
     """
+
     def _map_label(raw: object) -> Optional[int]:
         if raw is None:
             return None
@@ -167,7 +167,9 @@ def _summarize_centroids(centroids: List[Tuple[float, float]]) -> str:
     )
 
 
-def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[float, float]]:
+def load_centroids(
+    path: str, slide_path: Optional[str] = None
+) -> List[Tuple[float, float]]:
     """Load centroids from XML, GeoJSON, or HistoPLUS JSON annotations.
 
     Parameters
@@ -177,9 +179,6 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
     slide_path : str, optional
         WSI path required for HistoPLUS JSON annotations (tile-local coordinates).
     """
-    cache_path = _centroid_cache_path(path)
-    if _centroid_cache_is_fresh(cache_path, path):
-        return _read_centroid_cache(cache_path)
 
     lower = path.lower()
     raw_text: Optional[str] = None
@@ -225,7 +224,6 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         except Exception as exc:  # noqa: BLE001 - OpenSlide failure should not stop parsing.
             logger.warning("Failed to validate centroids against slide bounds: %s", exc)
 
-    _write_centroid_cache(cache_path, centroids)
     logger.info(
         "Parsed centroids from %s (format=%s, %s).",
         path,
@@ -233,41 +231,6 @@ def load_centroids(path: str, slide_path: Optional[str] = None) -> List[Tuple[fl
         _summarize_centroids(centroids),
     )
     return centroids
-
-
-def _centroid_cache_path(path: str) -> Path:
-    """Return the cache path used to store serialized centroids for an annotation."""
-    ann_path = Path(path)
-    return ann_path.with_suffix(ann_path.suffix + ".centroids.json")
-
-
-def _centroid_cache_is_fresh(cache_path: Path, ann_path: str) -> bool:
-    """Return True if a centroid cache exists and is newer than the annotation file."""
-    if not cache_path.exists():
-        return False
-    try:
-        cache_mtime = cache_path.stat().st_mtime
-        ann_mtime = Path(ann_path).stat().st_mtime
-    except OSError:
-        return False
-    return cache_mtime >= ann_mtime
-
-
-def _read_centroid_cache(path: Path) -> List[Tuple[float, float]]:
-    """Read cached centroid coordinates from disk."""
-    with open(path, "r", encoding="utf-8") as handle:
-        cached = json.load(handle)
-    centroids = [(float(item[0]), float(item[1])) for item in cached]
-    logger.info("Loaded cached centroids from %s (%s).", path, _summarize_centroids(centroids))
-    return centroids
-
-
-def _write_centroid_cache(path: Path, centroids: List[Tuple[float, float]]) -> None:
-    """Persist centroid coordinates to disk for future reuse."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = [[float(x), float(y)] for x, y in centroids]
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle)
 
 
 def safe_open_slide(wsi_path: str):
@@ -295,7 +258,9 @@ def _save_debug_sample(
     from torchvision.transforms.functional import to_pil_image
 
     assert config.max_samples >= 0, "max_samples must be non-negative."
-    assert patch.size == (big_size, big_size), f"Expected patch size {(big_size, big_size)}."
+    assert patch.size == (big_size, big_size), (
+        f"Expected patch size {(big_size, big_size)}."
+    )
     assert isinstance(view1, torch.Tensor), "view1 must be a torch.Tensor."
     assert isinstance(view2, torch.Tensor), "view2 must be a torch.Tensor."
     assert view1.shape == view2.shape, "Debug views must match shapes."
@@ -364,7 +329,9 @@ def build_entries_from_dirs(
         ann_path = ann_map.get(stem)
         if ann_path is None:
             continue
-        entries.append(SlideEntry(slide_id=stem, wsi_path=str(wsi_path), ann_path=str(ann_path)))
+        entries.append(
+            SlideEntry(slide_id=stem, wsi_path=str(wsi_path), ann_path=str(ann_path))
+        )
 
     unmatched_wsi = sorted(set(wsi_map.keys()) - set(ann_map.keys()))
     unmatched_ann = sorted(set(ann_map.keys()) - set(wsi_map.keys()))
@@ -414,7 +381,9 @@ class WSICellMoCoIterable(IterableDataset):
 
         from .augment import RotationCrop40, build_lemon_a1_gray_transform
 
-        self.rotcrop = RotationCrop40(big_size=big_size, out_size=out_size, degrees=360.0)
+        self.rotcrop = RotationCrop40(
+            big_size=big_size, out_size=out_size, degrees=360.0
+        )
         self.aug = build_lemon_a1_gray_transform(img_size=out_size)
 
         self.centroids: Dict[str, List[Tuple[float, float]]] = {}
@@ -425,8 +394,12 @@ class WSICellMoCoIterable(IterableDataset):
         except Exception:  # noqa: BLE001 - tqdm is optional at runtime.
             entry_iter = entries
         for entry in entry_iter:
-            self.centroids[entry.slide_id] = load_centroids(entry.ann_path, slide_path=entry.wsi_path)
-        self.valid_entries = [entry for entry in entries if self.centroids.get(entry.slide_id)]
+            self.centroids[entry.slide_id] = load_centroids(
+                entry.ann_path, slide_path=entry.wsi_path
+            )
+        self.valid_entries = [
+            entry for entry in entries if self.centroids.get(entry.slide_id)
+        ]
         for entry in entries:
             logger.info(
                 "Centroid summary for slide_id=%s wsi_path=%s ann_path=%s: %s",
@@ -435,7 +408,9 @@ class WSICellMoCoIterable(IterableDataset):
                 entry.ann_path,
                 _summarize_centroids(self.centroids.get(entry.slide_id, [])),
             )
-        total_centroids = sum(len(self.centroids.get(entry.slide_id, [])) for entry in entries)
+        total_centroids = sum(
+            len(self.centroids.get(entry.slide_id, [])) for entry in entries
+        )
         logger.info(
             "WSI dataset initialized with %d entries (%d with centroids, %d total centroids).",
             len(entries),
@@ -476,7 +451,9 @@ class WSICellMoCoIterable(IterableDataset):
         for _ in range(n_yield):
             entry = rng.choice(entries)
             centroids = self.centroids.get(entry.slide_id, [])
-            assert centroids, f"Expected non-empty centroids for slide {entry.slide_id}."
+            assert centroids, (
+                f"Expected non-empty centroids for slide {entry.slide_id}."
+            )
             center = rng.choice(centroids)
             slide = safe_open_slide(entry.wsi_path)
             try:
@@ -490,10 +467,18 @@ class WSICellMoCoIterable(IterableDataset):
             img40 = self.rotcrop(patch)
             view1 = self.aug(img40)
             view2 = self.aug(img40)
-            assert isinstance(view1, torch.Tensor), "Augmentation pipeline must return torch.Tensor."
-            assert isinstance(view2, torch.Tensor), "Augmentation pipeline must return torch.Tensor."
-            assert view1.shape == view2.shape, "Paired views must have identical shapes."
-            assert view1.ndim == 3, f"Expected CHW tensor, got shape {tuple(view1.shape)}."
+            assert isinstance(view1, torch.Tensor), (
+                "Augmentation pipeline must return torch.Tensor."
+            )
+            assert isinstance(view2, torch.Tensor), (
+                "Augmentation pipeline must return torch.Tensor."
+            )
+            assert view1.shape == view2.shape, (
+                "Paired views must have identical shapes."
+            )
+            assert view1.ndim == 3, (
+                f"Expected CHW tensor, got shape {tuple(view1.shape)}."
+            )
             expected_hw = (self.out_size, self.out_size)
             assert view1.shape[-2:] == expected_hw, (
                 f"Expected HxW {expected_hw}, got {tuple(view1.shape[-2:])}."
@@ -533,8 +518,12 @@ class CellDataModule(PLDataModule):
         debug_config: Optional[DebugSampleConfig] = None,
     ) -> None:
         super().__init__()
-        assert isinstance(entries, list), "entries must be a list of SlideEntry objects."
-        assert all(isinstance(entry, SlideEntry) for entry in entries), "entries must contain SlideEntry objects."
+        assert isinstance(entries, list), (
+            "entries must be a list of SlideEntry objects."
+        )
+        assert all(isinstance(entry, SlideEntry) for entry in entries), (
+            "entries must contain SlideEntry objects."
+        )
         assert epoch_length > 0, "epoch_length must be a positive integer."
         assert batch_size > 0, "batch_size must be a positive integer."
         assert num_workers >= 0, "num_workers must be non-negative."

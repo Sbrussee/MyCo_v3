@@ -8,6 +8,7 @@ This script uses in-memory fake slides and annotations to validate that:
   - The evaluation embedding collection and probe training execute.
 It also logs I/O throughput, CPU memory usage, and GPU memory usage (if available).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,8 +19,6 @@ import time
 from dataclasses import dataclass
 from typing import Iterable, List, Tuple
 from unittest import mock
-
-import numpy as np
 import torch
 from PIL import Image
 from tqdm import tqdm
@@ -36,7 +35,9 @@ class FakeSlide:
 
     size: int = 60
 
-    def read_region(self, location: Tuple[int, int], level: int, size: Tuple[int, int]) -> Image.Image:
+    def read_region(
+        self, location: Tuple[int, int], level: int, size: Tuple[int, int]
+    ) -> Image.Image:
         del location, level
         return Image.new("RGB", size, color=(127, 127, 127))
 
@@ -54,7 +55,11 @@ def _fake_open_slide(_: str) -> FakeSlide:
 
 def _build_entries(num_slides: int) -> List[SlideEntry]:
     return [
-        SlideEntry(slide_id=f"slide_{idx}", wsi_path=f"/fake/slide_{idx}.svs", ann_path=f"/fake/slide_{idx}.xml")
+        SlideEntry(
+            slide_id=f"slide_{idx}",
+            wsi_path=f"/fake/slide_{idx}.svs",
+            ann_path=f"/fake/slide_{idx}.xml",
+        )
         for idx in range(num_slides)
     ]
 
@@ -78,33 +83,49 @@ def _iter_batches(dataset: Iterable, num_batches: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Smoke test the MoCo pipeline end-to-end.")
+    parser = argparse.ArgumentParser(
+        description="Smoke test the MoCo pipeline end-to-end."
+    )
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--batches", type=int, default=4)
     parser.add_argument("--epoch_length", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
+    )
     seed_all(args.seed)
 
     entries = _build_entries(num_slides=6)
     slide_labels = {entry.slide_id: int(idx % 2) for idx, entry in enumerate(entries)}
 
-    with mock.patch("myco.data.load_centroids", side_effect=_fake_centroids), mock.patch(
-        "myco.data.safe_open_slide", side_effect=_fake_open_slide
+    with (
+        mock.patch("myco.data.load_centroids", side_effect=_fake_centroids),
+        mock.patch("myco.data.safe_open_slide", side_effect=_fake_open_slide),
     ):
-        dataset = WSICellMoCoIterable(entries=entries, epoch_length=args.epoch_length, seed=args.seed)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, num_workers=0)
+        dataset = WSICellMoCoIterable(
+            entries=entries, epoch_length=args.epoch_length, seed=args.seed
+        )
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=args.batch_size, num_workers=0
+        )
 
         start = time.perf_counter()
         for _ in tqdm(range(args.batches), desc="Loading batches"):
             batch = next(iter(dataloader))
-            assert isinstance(batch, (list, tuple)), "Expected batch to be a tuple/list."
+            assert isinstance(batch, (list, tuple)), (
+                "Expected batch to be a tuple/list."
+            )
             x1, x2 = batch
             assert x1.shape == x2.shape, "Augmented views must match shape."
         elapsed = time.perf_counter() - start
-        logging.info("Loaded %d batches in %.3f s (%.2f batches/s).", args.batches, elapsed, args.batches / elapsed)
+        logging.info(
+            "Loaded %d batches in %.3f s (%.2f batches/s).",
+            args.batches,
+            elapsed,
+            args.batches / elapsed,
+        )
 
         model = MoCoV3Lit(
             init_ckpt="",
@@ -131,13 +152,28 @@ def main() -> None:
             entries=entries,
             slide_labels=slide_labels,
             output_dir=".",
-            probe=ProbeConfig(cells_per_slide=5, probe_epochs=2, probe_lr=1e-3, slides_per_class=3, seed=args.seed),
-            mosaic=MosaicConfig(method="tsne", max_points=50, point_size=4, thumb_size=4, random_state=args.seed),
+            probe=ProbeConfig(
+                cells_per_slide=5,
+                probe_epochs=2,
+                probe_lr=1e-3,
+                slides_per_class=3,
+                seed=args.seed,
+            ),
+            mosaic=MosaicConfig(
+                method="tsne",
+                max_points=50,
+                point_size=4,
+                thumb_size=4,
+                random_state=args.seed,
+            ),
         )
-        with mock.patch("myco.data.safe_open_slide", side_effect=_fake_open_slide), mock.patch(
-            "myco.data.load_centroids", side_effect=_fake_centroids
+        with (
+            mock.patch("myco.data.safe_open_slide", side_effect=_fake_open_slide),
+            mock.patch("myco.data.load_centroids", side_effect=_fake_centroids),
         ):
-            embeds_by_slide, labels, _, _ = eval_cb._collect_embeddings(model, device, rng=random.Random(args.seed))
+            embeds_by_slide, labels, _, _ = eval_cb._collect_embeddings(
+                model, device, rng=random.Random(args.seed)
+            )
             probe_metrics = eval_cb._train_probe(embeds_by_slide, labels, device)
             logging.info("Probe metrics: %s", probe_metrics)
 
