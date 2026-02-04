@@ -1,4 +1,5 @@
 """Utilities for converting HistoPLUS cell masks to slide-level centroids."""
+
 from __future__ import annotations
 
 import logging
@@ -23,7 +24,9 @@ def _deepzoom_tile_origin_and_scale(
         (tile_l0_x, tile_l0_y, level_scale) or None if the tile lookup fails.
     """
     try:
-        (tile_l0_x, tile_l0_y), _, _ = dz.get_tile_coordinates(dz_level, (tile_col, tile_row))
+        (tile_l0_x, tile_l0_y), _, _ = dz.get_tile_coordinates(
+            dz_level, (tile_col, tile_row)
+        )
     except Exception as exc:  # noqa: BLE001 - external OpenSlide failures are surfaced as warnings.
         logger.warning(
             "Could not get tile coordinates for tile (%d, %d) at level %d: %s",
@@ -74,7 +77,9 @@ def _coerce_point(point: object) -> Optional[Tuple[float, float]]:
 
 def _infer_tile_origin_mode(item: dict) -> str:
     """Infer whether tile origins are indices or pixel offsets."""
-    unit = str(item.get("tile_unit") or item.get("tile_units") or item.get("units") or "").lower()
+    unit = str(
+        item.get("tile_unit") or item.get("tile_units") or item.get("units") or ""
+    ).lower()
     if "pixel" in unit:
         return "pixel"
     x_val = item.get("x", item.get("tile_x", item.get("tile_col", 0)))
@@ -101,7 +106,9 @@ def _tile_indices_in_bounds(dz, level: int, tile_col: int, tile_row: int) -> boo
     return 0 <= tile_col < int(max_cols) and 0 <= tile_row < int(max_rows)
 
 
-def _centroid_from_coordinates(coords: Iterable[Iterable[float]]) -> Optional[Tuple[float, float]]:
+def _centroid_from_coordinates(
+    coords: Iterable[Iterable[float]],
+) -> Optional[Tuple[float, float]]:
     """Compute a centroid from polygon coordinates."""
     coord_list = list(coords)
     if not coord_list:
@@ -142,7 +149,9 @@ def _iter_centroids_from_cell_masks(
                 or item.get("objects")
                 or item.get("instances")
             )
-        if mask_payload is None and ("centroid" in item or "coordinates" in item or "center" in item):
+        if mask_payload is None and (
+            "centroid" in item or "coordinates" in item or "center" in item
+        ):
             mask_payload = [item]
         if not isinstance(mask_payload, list):
             continue
@@ -193,7 +202,9 @@ def _iter_global_centroids(
             tile_col = int(round(tile_x))
             tile_row = int(round(tile_y))
             if _tile_indices_in_bounds(dz, dz_level, tile_col, tile_row):
-                tile_info = _deepzoom_tile_origin_and_scale(dz, tile_col, tile_row, dz_level)
+                tile_info = _deepzoom_tile_origin_and_scale(
+                    dz, tile_col, tile_row, dz_level
+                )
             else:
                 logger.info(
                     "Tile indices (%d, %d) exceed DeepZoom grid for level %d; treating as pixel offsets.",
@@ -272,7 +283,9 @@ def histoplus_centroids_from_masks(
         return []
     assert isinstance(cell_masks, list), "cell_masks must be a list of dictionaries."
     centroids = list(_iter_centroids_from_cell_masks(cell_masks, progress=progress))
-    logger.info("Loaded %d HistoPLUS centroids from global coordinates.", len(centroids))
+    logger.info(
+        "Loaded %d HistoPLUS centroids from global coordinates.", len(centroids)
+    )
     return centroids
 
 
@@ -323,7 +336,9 @@ def histoplus_centroids_from_payload(
 
     slide = openslide.OpenSlide(slide_path)
     try:
-        dz = DeepZoomGenerator(slide, tile_size=tile_size, overlap=overlap, limit_bounds=False)
+        dz = DeepZoomGenerator(
+            slide, tile_size=tile_size, overlap=overlap, limit_bounds=False
+        )
         offset_x = int(slide.properties.get("openslide.bounds-x", 0))
         offset_y = int(slide.properties.get("openslide.bounds-y", 0))
         level_downsamples = [float(value) for value in slide.level_downsamples]
@@ -342,5 +357,7 @@ def histoplus_centroids_from_payload(
     finally:
         slide.close()
 
-    logger.info("Converted %d HistoPLUS centroids to slide coordinates.", len(centroids))
+    logger.info(
+        "Converted %d HistoPLUS centroids to slide coordinates.", len(centroids)
+    )
     return centroids

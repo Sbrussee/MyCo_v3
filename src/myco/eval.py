@@ -1,4 +1,5 @@
 """Evaluation callback for representation metrics and probe training."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from .utils import read_patch
 from .visualization import MosaicConfig, create_patch_mosaic
 
 logger = logging.getLogger(__name__)
+
 
 class AttentionPool(nn.Module):
     """Attention pooling for slide-level classification."""
@@ -66,7 +68,9 @@ def repr_metrics_np(embeddings: np.ndarray) -> Dict[str, float]:
 
     Expected input shape: (n_samples, embedding_dim).
     """
-    assert embeddings.ndim == 2, f"Expected 2D embeddings array, got shape {embeddings.shape}."
+    assert embeddings.ndim == 2, (
+        f"Expected 2D embeddings array, got shape {embeddings.shape}."
+    )
     if embeddings.size == 0:
         logger.warning("No embeddings available for representation metrics.")
         return {"embedding_variance": float("nan"), "mean_embedding_norm": float("nan")}
@@ -80,7 +84,9 @@ def repr_metrics_np(embeddings: np.ndarray) -> Dict[str, float]:
         )
     embeddings = embeddings[finite_rows]
     if embeddings.size == 0:
-        logger.error("All embeddings were non-finite; representation metrics are undefined.")
+        logger.error(
+            "All embeddings were non-finite; representation metrics are undefined."
+        )
         return {"embedding_variance": float("nan"), "mean_embedding_norm": float("nan")}
 
     return {
@@ -107,7 +113,11 @@ class EvalCallback(pl.Callback):
         self.probe = probe
         self.mosaic = mosaic
 
-        self.rotcrop = RotationCrop40(big_size=60, out_size=40, degrees=360.0)
+        self.rotcrop = RotationCrop40(
+            big_size=60,
+            out_size=40,
+            degrees=360.0,
+        )
         self.totensor = ToTensor()
 
         self._probe_subset: Optional[List[SlideEntry]] = None
@@ -117,10 +127,17 @@ class EvalCallback(pl.Callback):
         if trainer.global_rank != 0:
             return
         os.makedirs(self.output_dir, exist_ok=True)
+        self.rotcrop = RotationCrop40(
+            big_size=pl_module.big_size,
+            out_size=pl_module.img_size,
+            degrees=360.0,
+        )
         self._probe_subset = self._select_probe_subset()
         subset_path = os.path.join(self.output_dir, "probe_subset.json")
         with open(subset_path, "w", encoding="utf-8") as handle:
-            json.dump([entry.slide_id for entry in self._probe_subset], handle, indent=2)
+            json.dump(
+                [entry.slide_id for entry in self._probe_subset], handle, indent=2
+            )
         num_labels = len(self.slide_labels)
         positives = sum(1 for label in self.slide_labels.values() if label == 1)
         negatives = sum(1 for label in self.slide_labels.values() if label == 0)
@@ -148,7 +165,10 @@ class EvalCallback(pl.Callback):
             logger.warning("No negative slides available for probe evaluation.")
         rng.shuffle(positives)
         rng.shuffle(negatives)
-        selected = positives[: self.probe.slides_per_class] + negatives[: self.probe.slides_per_class]
+        selected = (
+            positives[: self.probe.slides_per_class]
+            + negatives[: self.probe.slides_per_class]
+        )
         logger.info(
             "Selected %d/%d positives and %d/%d negatives for probe subset.",
             min(len(positives), self.probe.slides_per_class),
@@ -180,7 +200,8 @@ class EvalCallback(pl.Callback):
                 z = pl_module.encode(x).squeeze(0).detach().cpu().numpy()
                 if not np.isfinite(z).all():
                     logger.warning(
-                        "Non-finite embedding for slide %s; skipping this patch.", entry.slide_id
+                        "Non-finite embedding for slide %s; skipping this patch.",
+                        entry.slide_id,
                     )
                     continue
                 embs.append(z)
@@ -219,7 +240,9 @@ class EvalCallback(pl.Callback):
             if not centroids:
                 skipped_missing_centroids += 1
                 continue
-            embeddings, patches = self._embed_slide(pl_module, device, entry, centroids, rng)
+            embeddings, patches = self._embed_slide(
+                pl_module, device, entry, centroids, rng
+            )
             if embeddings.shape[0] == 0:
                 skipped_empty_embeddings += 1
                 continue
@@ -255,7 +278,9 @@ class EvalCallback(pl.Callback):
     ) -> Dict[str, float]:
         keys = list(embeds.keys())
         if len(keys) < 4:
-            logger.warning("Not enough slides (%d) for probe training; skipping.", len(keys))
+            logger.warning(
+                "Not enough slides (%d) for probe training; skipping.", len(keys)
+            )
             return {"probe_auc": float("nan"), "probe_bal_acc": float("nan")}
 
         rng = np.random.default_rng(self.probe.seed)
@@ -281,8 +306,12 @@ class EvalCallback(pl.Callback):
             clf.train()
             for slide_id in train_keys:
                 hidden = torch.from_numpy(embeds[slide_id]).float().to(device)
-                assert hidden.ndim == 2, f"Expected embeddings to be 2D, got {hidden.shape}."
-                target = torch.tensor([labels[slide_id]], dtype=torch.float32, device=device)
+                assert hidden.ndim == 2, (
+                    f"Expected embeddings to be 2D, got {hidden.shape}."
+                )
+                target = torch.tensor(
+                    [labels[slide_id]], dtype=torch.float32, device=device
+                )
                 pooled = attn(hidden)
                 logit = clf(pooled).squeeze(0)
                 loss = F.binary_cross_entropy_with_logits(logit, target)
@@ -363,24 +392,35 @@ class EvalCallback(pl.Callback):
             embeddings_np = np.concatenate(batches, axis=0)
             repr_metrics = repr_metrics_np(embeddings_np)
         else:
-            logger.warning("No training batches available for representation metrics at epoch %d.", trainer.current_epoch)
-            repr_metrics = {"embedding_variance": float("nan"), "mean_embedding_norm": float("nan")}
+            logger.warning(
+                "No training batches available for representation metrics at epoch %d.",
+                trainer.current_epoch,
+            )
+            repr_metrics = {
+                "embedding_variance": float("nan"),
+                "mean_embedding_norm": float("nan"),
+            }
 
-        embeds_by_slide, labels, mosaic_patches, mosaic_embeddings = self._collect_embeddings(
-            pl_module, device, rng
+        embeds_by_slide, labels, mosaic_patches, mosaic_embeddings = (
+            self._collect_embeddings(pl_module, device, rng)
         )
         probe_metrics = self._train_probe(embeds_by_slide, labels, device=device)
-        best_state = self._maybe_save_best(pl_module, trainer.current_epoch, probe_metrics)
+        best_state = self._maybe_save_best(
+            pl_module, trainer.current_epoch, probe_metrics
+        )
 
         metrics = {**repr_metrics, **probe_metrics}
         trainer.logger.log_metrics(metrics, step=trainer.global_step)
         if best_state is not None:
             trainer.logger.log_metrics(
-                {"best_probe_bal_acc": best_state.metric_value}, step=trainer.global_step
+                {"best_probe_bal_acc": best_state.metric_value},
+                step=trainer.global_step,
             )
 
         if mosaic_embeddings.shape[0] > 0:
-            mosaic_path = os.path.join(self.output_dir, f"mosaic_epoch_{trainer.current_epoch:03d}.png")
+            mosaic_path = os.path.join(
+                self.output_dir, f"mosaic_epoch_{trainer.current_epoch:03d}.png"
+            )
             title = f"Epoch {trainer.current_epoch} {self.mosaic.method.upper()} Mosaic"
             create_patch_mosaic(
                 mosaic_embeddings,

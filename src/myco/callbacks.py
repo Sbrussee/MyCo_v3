@@ -1,4 +1,5 @@
 """Training callbacks for logging metrics and progress."""
+
 from __future__ import annotations
 
 import resource
@@ -15,11 +16,17 @@ def extract_batch_size(batch: Sequence[torch.Tensor]) -> int:
     Expected batch structure: ``(x1, x2)`` where each tensor is shaped
     ``(batch, channels, height, width)`` and both tensors match in shape.
     """
-    assert isinstance(batch, (list, tuple)), "Expected batch to be a tuple/list of tensors."
+    assert isinstance(batch, (list, tuple)), (
+        "Expected batch to be a tuple/list of tensors."
+    )
     assert len(batch) == 2, "Expected batch to contain exactly two tensors."
     x1, x2 = batch
-    assert isinstance(x1, torch.Tensor), "Expected the first batch element to be a torch.Tensor."
-    assert isinstance(x2, torch.Tensor), "Expected the second batch element to be a torch.Tensor."
+    assert isinstance(x1, torch.Tensor), (
+        "Expected the first batch element to be a torch.Tensor."
+    )
+    assert isinstance(x2, torch.Tensor), (
+        "Expected the second batch element to be a torch.Tensor."
+    )
     assert x1.ndim == 4, "Expected x1 to have shape (batch, channels, height, width)."
     assert x2.ndim == 4, "Expected x2 to have shape (batch, channels, height, width)."
     assert x1.shape == x2.shape, "Expected x1 and x2 to share identical shapes."
@@ -57,7 +64,9 @@ class BatchMetricsLogger(pl.Callback):
         del outputs
         if (batch_idx + 1) % self.log_every_n_batches != 0:
             return
-        assert isinstance(batch, (list, tuple)), "Expected batch to be a tuple/list of tensors."
+        assert isinstance(batch, (list, tuple)), (
+            "Expected batch to be a tuple/list of tensors."
+        )
         batch_size = extract_batch_size(batch)
         batch_time = None
         if self._batch_start_time is not None:

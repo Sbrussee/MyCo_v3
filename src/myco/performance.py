@@ -1,4 +1,5 @@
 """Performance utilities for memory and IO monitoring."""
+
 from __future__ import annotations
 
 import logging
