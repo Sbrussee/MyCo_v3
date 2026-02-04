@@ -1,4 +1,5 @@
 """Visualization utilities for embedding mosaics."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,7 +39,9 @@ def _build_umap_reducer(random_state: int):
     return reducer_cls(n_components=2, random_state=random_state)
 
 
-def _project_embeddings(embeddings: np.ndarray, method: str, random_state: int) -> np.ndarray:
+def _project_embeddings(
+    embeddings: np.ndarray, method: str, random_state: int
+) -> np.ndarray:
     """Project embeddings to 2D coordinates.
 
     Args:
@@ -47,7 +50,9 @@ def _project_embeddings(embeddings: np.ndarray, method: str, random_state: int) 
         random_state: Random seed for deterministic projections.
     """
     assert isinstance(embeddings, np.ndarray), "Embeddings must be a NumPy array."
-    assert embeddings.ndim == 2, "Embeddings must have shape (num_points, embedding_dim)."
+    assert embeddings.ndim == 2, (
+        "Embeddings must have shape (num_points, embedding_dim)."
+    )
     assert embeddings.shape[0] > 0, "Embeddings must contain at least one point."
     assert method in {"umap", "tsne"}, "Projection method must be 'umap' or 'tsne'."
 
@@ -75,7 +80,9 @@ def create_patch_mosaic(
         output_path: Output image path.
     """
     assert isinstance(embeddings, np.ndarray), "Embeddings must be a NumPy array."
-    assert embeddings.ndim == 2, "Embeddings must have shape (num_points, embedding_dim)."
+    assert embeddings.ndim == 2, (
+        "Embeddings must have shape (num_points, embedding_dim)."
+    )
     assert isinstance(patches, list), "Patches must be a list of NumPy arrays."
     if embeddings.shape[0] == 0:
         raise ValueError("No embeddings provided for mosaic plot.")
@@ -83,7 +90,9 @@ def create_patch_mosaic(
     n_points = min(config.max_points, embeddings.shape[0])
     embeddings = embeddings[:n_points]
     patches = patches[:n_points]
-    assert len(patches) == n_points, "Number of patches must match number of embeddings."
+    assert len(patches) == n_points, (
+        "Number of patches must match number of embeddings."
+    )
 
     coords = _project_embeddings(embeddings, config.method, config.random_state)
     fig, ax = plt.subplots(figsize=(10, 10))

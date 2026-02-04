@@ -1,6 +1,11 @@
 import time
 
-from myco.performance import IoTiming, get_cpu_rss_mb, get_gpu_memory_mb, measure_io_latency
+from myco.performance import (
+    IoTiming,
+    get_cpu_rss_mb,
+    get_gpu_memory_mb,
+    measure_io_latency,
+)
 
 
 def test_measure_io_latency_returns_stats() -> None:

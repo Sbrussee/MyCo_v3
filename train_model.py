@@ -68,6 +68,8 @@ def build_argparser() -> argparse.ArgumentParser:
 
     parser.add_argument("--proj_dim", type=int, default=256)
     parser.add_argument("--mlp_hidden", type=int, default=2048)
+    parser.add_argument("--img_size", type=int, default=40)
+    parser.add_argument("--big_size", type=int, default=60)
 
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument(
@@ -148,6 +150,8 @@ def main() -> None:
     args = build_argparser().parse_args()
     os.makedirs(args.outdir, exist_ok=True)
     seed_all(args.seed)
+    assert args.img_size > 0, "img_size must be positive."
+    assert args.big_size >= args.img_size, "big_size must be >= img_size."
 
     logger = logging.getLogger(__name__)
     logger.info("Training configuration: %s", vars(args))
@@ -168,6 +172,8 @@ def main() -> None:
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         seed=args.seed,
+        out_size=args.img_size,
+        big_size=args.big_size,
         debug_config=debug_config,
     )
 
@@ -185,6 +191,8 @@ def main() -> None:
         epochs=args.epochs,
         steps_per_epoch=steps_per_epoch,
         warmup_epochs=args.warmup_epochs,
+        img_size=args.img_size,
+        big_size=args.big_size,
     )
 
     trainer_logger = build_logger(args.outdir)

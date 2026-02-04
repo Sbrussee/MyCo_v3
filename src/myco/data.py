@@ -43,6 +43,9 @@ class DebugSampleConfig:
 
     output_dir: Path
     max_samples: int = 0
+    save_augmentation_examples: bool = True
+    augmentation_seed: int = 0
+    augmentation_dirname: str = "augmentations"
 
 
 def read_slide_labels(path: str) -> Dict[str, int]:
@@ -248,6 +251,7 @@ def _save_debug_sample(
     entry: SlideEntry,
     center: Tuple[float, float],
     patch,
+    base_crop,
     view1,
     view2,
     out_size: int,
@@ -265,19 +269,38 @@ def _save_debug_sample(
     assert isinstance(view2, torch.Tensor), "view2 must be a torch.Tensor."
     assert view1.shape == view2.shape, "Debug views must match shapes."
     assert view1.shape[-2:] == (out_size, out_size), "Unexpected debug view size."
+    assert base_crop.size == (out_size, out_size), (
+        f"Expected base crop size {(out_size, out_size)}, got {base_crop.size}."
+    )
 
     safe_slide_id = entry.slide_id.replace(os.sep, "_")
     sample_prefix = f"{safe_slide_id}_sample_{sample_idx:04d}"
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     patch_path = config.output_dir / f"{sample_prefix}_patch.png"
+    base_crop_path = config.output_dir / f"{sample_prefix}_base_crop.png"
     view1_path = config.output_dir / f"{sample_prefix}_view1.png"
     view2_path = config.output_dir / f"{sample_prefix}_view2.png"
     metadata_path = config.output_dir / f"{sample_prefix}_meta.json"
 
     patch.save(patch_path)
+    base_crop.save(base_crop_path)
     to_pil_image(view1.detach().cpu().clamp(0, 1)).save(view1_path)
     to_pil_image(view2.detach().cpu().clamp(0, 1)).save(view2_path)
+
+    aug_dir = None
+    aug_seed = None
+    if config.save_augmentation_examples:
+        from .augment import save_augmentation_examples
+
+        aug_seed = config.augmentation_seed + sample_idx
+        aug_dir = config.output_dir / f"{sample_prefix}_{config.augmentation_dirname}"
+        save_augmentation_examples(
+            base_crop,
+            aug_dir,
+            img_size=out_size,
+            seed=aug_seed,
+        )
 
     metadata = {
         "slide_id": entry.slide_id,
@@ -287,8 +310,11 @@ def _save_debug_sample(
         "patch_size": [int(big_size), int(big_size)],
         "view_shape": list(view1.shape),
         "patch_path": str(patch_path),
+        "base_crop_path": str(base_crop_path),
         "view1_path": str(view1_path),
         "view2_path": str(view2_path),
+        "augmentation_examples_dir": str(aug_dir) if aug_dir is not None else None,
+        "augmentation_seed": aug_seed,
     }
     with open(metadata_path, "w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2)
@@ -371,6 +397,9 @@ class WSICellMoCoIterable(IterableDataset):
         debug_config: Optional[DebugSampleConfig] = None,
     ) -> None:
         super().__init__()
+        assert out_size > 0, "out_size must be positive."
+        assert big_size > 0, "big_size must be positive."
+        assert big_size >= out_size, "big_size must be >= out_size."
         self.all_entries = entries
         self.epoch_length = epoch_length
         self.seed = seed
@@ -496,6 +525,7 @@ class WSICellMoCoIterable(IterableDataset):
                     entry,
                     center,
                     patch,
+                    img40,
                     view1,
                     view2,
                     self.out_size,
@@ -515,6 +545,8 @@ class CellDataModule(PLDataModule):
         batch_size: int,
         num_workers: int,
         seed: int,
+        out_size: int = 40,
+        big_size: int = 60,
         debug_config: Optional[DebugSampleConfig] = None,
     ) -> None:
         super().__init__()
@@ -532,6 +564,8 @@ class CellDataModule(PLDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.seed = seed
+        self.out_size = out_size
+        self.big_size = big_size
         self.debug_config = debug_config
 
     def train_dataloader(self) -> DataLoader:
@@ -539,6 +573,8 @@ class CellDataModule(PLDataModule):
             self.entries,
             self.epoch_length,
             seed=self.seed,
+            out_size=self.out_size,
+            big_size=self.big_size,
             debug_config=self.debug_config,
         )
         return DataLoader(

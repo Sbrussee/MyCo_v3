@@ -103,7 +103,9 @@ def test_load_centroids_json_list_of_dicts(tmp_path: Path) -> None:
 
 def test_load_centroids_json_points_key(tmp_path: Path) -> None:
     json_path = tmp_path / "ann.json"
-    json_path.write_text(json.dumps({"points": [{"x": 5, "y": 6}, {"centroid": [7, 8]}]}))
+    json_path.write_text(
+        json.dumps({"points": [{"x": 5, "y": 6}, {"centroid": [7, 8]}]})
+    )
     coords = load_centroids(str(json_path))
     assert coords == [(5.0, 6.0), (7.0, 8.0)]
 
@@ -115,7 +117,9 @@ def test_load_centroids_json_detections_key(tmp_path: Path) -> None:
     assert coords == [(11.0, 12.0)]
 
 
-def test_load_centroids_json_level_remap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_centroids_json_level_remap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     json_path = tmp_path / "ann.json"
     json_path.write_text(json.dumps({"level": 1, "centroids": [[10, 20]]}))
 
@@ -138,7 +142,9 @@ def test_load_centroids_json_level_remap(tmp_path: Path, monkeypatch: pytest.Mon
     assert coords == [(40.0, 80.0)]
 
 
-def test_load_centroids_filters_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_centroids_filters_bounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     json_path = tmp_path / "ann.json"
     json_path.write_text(json.dumps({"centroids": [[5, 5], [500, 500]]}))
 
@@ -177,8 +183,12 @@ def test_build_entries_from_dirs(tmp_path: Path) -> None:
 
 def test_cell_datamodule_inherits_lightning_datamodule() -> None:
     pl = pytest.importorskip("pytorch_lightning")
-    entries = [SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")]
-    datamodule = CellDataModule(entries=entries, epoch_length=1, batch_size=1, num_workers=0, seed=0)
+    entries = [
+        SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")
+    ]
+    datamodule = CellDataModule(
+        entries=entries, epoch_length=1, batch_size=1, num_workers=0, seed=0
+    )
 
     assert isinstance(datamodule, pl.LightningDataModule)
     assert hasattr(datamodule, "on_exception")
@@ -204,7 +214,9 @@ def test_wsi_iterable_filters_empty_centroids(monkeypatch) -> None:
 
 
 def test_wsi_iterable_raises_without_centroids(monkeypatch) -> None:
-    entries = [SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")]
+    entries = [
+        SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")
+    ]
 
     def fake_load_centroids(path: str, slide_path: str | None = None):
         del slide_path
@@ -217,9 +229,14 @@ def test_wsi_iterable_raises_without_centroids(monkeypatch) -> None:
 
 
 def test_save_debug_sample(tmp_path: Path) -> None:
-    config = DebugSampleConfig(output_dir=tmp_path, max_samples=1)
-    entry = SlideEntry(slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml")
+    config = DebugSampleConfig(
+        output_dir=tmp_path, max_samples=1, save_augmentation_examples=False
+    )
+    entry = SlideEntry(
+        slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml"
+    )
     patch = Image.new("RGB", (60, 60), color=(255, 0, 0))
+    base_crop = Image.new("RGB", (40, 40), color=(0, 255, 0))
     view1 = torch.zeros((3, 40, 40), dtype=torch.float32)
     view2 = torch.ones((3, 40, 40), dtype=torch.float32)
 
@@ -229,6 +246,7 @@ def test_save_debug_sample(tmp_path: Path) -> None:
         entry=entry,
         center=(10.0, 20.0),
         patch=patch,
+        base_crop=base_crop,
         view1=view1,
         view2=view2,
         out_size=40,
@@ -236,6 +254,7 @@ def test_save_debug_sample(tmp_path: Path) -> None:
     )
 
     assert (tmp_path / "slide_1_sample_0000_patch.png").exists()
+    assert (tmp_path / "slide_1_sample_0000_base_crop.png").exists()
     assert (tmp_path / "slide_1_sample_0000_view1.png").exists()
     assert (tmp_path / "slide_1_sample_0000_view2.png").exists()
     assert (tmp_path / "slide_1_sample_0000_meta.json").exists()
@@ -248,7 +267,9 @@ def test_pipeline_smoke_with_dummy_slide(tmp_path: Path, monkeypatch) -> None:
     ann_dir.mkdir()
 
     (wsi_dir / "slide_1.svs").write_text("fake")
-    (ann_dir / "slide_1.json").write_text(json.dumps({"centroids": [[15, 20], [30, 40]]}))
+    (ann_dir / "slide_1.json").write_text(
+        json.dumps({"centroids": [[15, 20], [30, 40]]})
+    )
 
     entries = build_entries_from_dirs(str(wsi_dir), str(ann_dir))
 
@@ -261,7 +282,9 @@ def test_pipeline_smoke_with_dummy_slide(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr("myco.data.safe_open_slide", lambda _path: DummySlide())
 
-    datamodule = CellDataModule(entries=entries, epoch_length=2, batch_size=2, num_workers=0, seed=0)
+    datamodule = CellDataModule(
+        entries=entries, epoch_length=2, batch_size=2, num_workers=0, seed=0
+    )
     loader = datamodule.train_dataloader()
     batch = next(iter(loader))
     view1, view2 = batch

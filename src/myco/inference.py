@@ -1,4 +1,5 @@
 """Inference utilities for extracting embeddings from trained MoCo v3 weights."""
+
 from __future__ import annotations
 
 import argparse
@@ -35,6 +36,8 @@ def _init_model(weights_path: str, device: torch.device) -> MoCoV3Lit:
         mlp_hidden=hparams.get("mlp_hidden", 2048),
         base_m=hparams.get("m", 0.99),
         epochs=hparams.get("epochs", 1),
+        img_size=hparams.get("img_size", 40),
+        big_size=hparams.get("big_size", 60),
     )
     model.q_enc.load_state_dict(payload["q_enc"])
     model.q_proj.load_state_dict(payload["q_proj"])
@@ -50,7 +53,9 @@ def _embed_slide(
     max_cells: int,
     device: torch.device,
 ) -> np.ndarray:
-    rotcrop = RotationCrop40(big_size=60, out_size=40, degrees=360.0)
+    rotcrop = RotationCrop40(
+        big_size=model.big_size, out_size=model.img_size, degrees=360.0
+    )
     totensor = ToTensor()
     rng = np.random.default_rng(0)
     embeddings: List[np.ndarray] = []
@@ -94,12 +99,16 @@ def run_inference(
         "entries": [entry.slide_id for entry in entries],
         "max_cells": max_cells,
     }
-    with open(os.path.join(out_dir, "inference_metadata.json"), "w", encoding="utf-8") as handle:
+    with open(
+        os.path.join(out_dir, "inference_metadata.json"), "w", encoding="utf-8"
+    ) as handle:
         json.dump(metadata, handle, indent=2)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Extract MoCo v3 embeddings from WSI slides.")
+    parser = argparse.ArgumentParser(
+        description="Extract MoCo v3 embeddings from WSI slides."
+    )
     parser.add_argument("--wsi_dir", required=True)
     parser.add_argument("--ann_dir", required=True)
     parser.add_argument("--weights", required=True)
