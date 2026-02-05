@@ -84,6 +84,26 @@ def _apply_color_jitter(
     return img
 
 
+def _sample_gaussian_sigma(sigma_min: float = 0.1, sigma_max: float = 2.0) -> float:
+    """Sample a Gaussian blur sigma using the active torch RNG state.
+
+    Parameters
+    ----------
+    sigma_min : float
+        Lower bound for sigma in pixel units.
+    sigma_max : float
+        Upper bound for sigma in pixel units.
+
+    Returns
+    -------
+    float
+        A sampled sigma value in ``[sigma_min, sigma_max]``.
+    """
+    assert sigma_min > 0.0, "sigma_min must be positive."
+    assert sigma_max >= sigma_min, "sigma_max must be >= sigma_min."
+    return float(torch.empty(1).uniform_(sigma_min, sigma_max).item())
+
+
 def apply_lemon_a1_gray_with_params(
     img: Image.Image,
     img_size: int,
@@ -186,7 +206,7 @@ def apply_lemon_a1_gray_with_params(
         {"name": "random_grayscale", "params": {"p": gray_p, "applied": do_gray}}
     )
 
-    sigma = T.GaussianBlur.get_params((0.1, 2.0))
+    sigma = _sample_gaussian_sigma(0.1, 2.0)
     img = TF.gaussian_blur(img, kernel_size=[3, 3], sigma=sigma)
     params.append({"name": "gaussian_blur", "params": {"sigma": float(sigma)}})
 
@@ -339,7 +359,7 @@ def save_augmentation_examples(
     )
     before_path = after_path
 
-    sigma = T.GaussianBlur.get_params((0.1, 2.0))
+    sigma = _sample_gaussian_sigma(0.1, 2.0)
     img = TF.gaussian_blur(img, kernel_size=[3, 3], sigma=sigma)
     after_path = _save_step("gaussian_blur", img)
     params.append(
