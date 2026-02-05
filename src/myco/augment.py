@@ -104,6 +104,45 @@ def _sample_gaussian_sigma(sigma_min: float = 0.1, sigma_max: float = 2.0) -> fl
     return float(torch.empty(1).uniform_(sigma_min, sigma_max).item())
 
 
+def _sample_random_erasing_params(
+    tensor: torch.Tensor,
+    scale: Tuple[float, float],
+    ratio: Tuple[float, float],
+    value: str | int | float | List[float],
+) -> Tuple[int, int, int, int, torch.Tensor]:
+    """Sample RandomErasing parameters compatible across torchvision versions.
+
+    Parameters
+    ----------
+    tensor : torch.Tensor
+        Input tensor to erase from with shape ``(C, H, W)`` and floating dtype.
+    scale : tuple[float, float]
+        Range of erased area proportion.
+    ratio : tuple[float, float]
+        Range of aspect ratios for the erased region.
+    value : str | int | float | list[float]
+        Erasing fill value. ``"random"`` uses per-pixel random values.
+
+    Returns
+    -------
+    tuple[int, int, int, int, torch.Tensor]
+        ``(i, j, h, w, v)`` erase parameters from
+        :func:`torchvision.transforms.RandomErasing.get_params`.
+    """
+    assert tensor.ndim == 3, (
+        f"Expected tensor shape (C, H, W), got {tuple(tensor.shape)}."
+    )
+
+    erased_value: int | float | List[float] | None
+    erased_value = None if value == "random" else value
+    return T.RandomErasing.get_params(
+        tensor,
+        scale=scale,
+        ratio=ratio,
+        value=erased_value,
+    )
+
+
 def apply_lemon_a1_gray_with_params(
     img: Image.Image,
     img_size: int,
@@ -216,8 +255,11 @@ def apply_lemon_a1_gray_with_params(
     erase_p = 0.3
     do_erase = random.random() < erase_p
     if do_erase:
-        i, j, h, w, v = T.RandomErasing.get_params(
-            tensor, scale=(0.1, 0.3), ratio=(0.8, 1.2), value="random"
+        i, j, h, w, v = _sample_random_erasing_params(
+            tensor,
+            scale=(0.1, 0.3),
+            ratio=(0.8, 1.2),
+            value="random",
         )
         tensor = TF.erase(tensor, i, j, h, w, v, inplace=False)
         params.append(
@@ -388,8 +430,11 @@ def save_augmentation_examples(
     erase_p = 0.3
     do_erase = random.random() < erase_p
     if do_erase:
-        i, j, h, w, v = T.RandomErasing.get_params(
-            tensor, scale=(0.1, 0.3), ratio=(0.8, 1.2), value="random"
+        i, j, h, w, v = _sample_random_erasing_params(
+            tensor,
+            scale=(0.1, 0.3),
+            ratio=(0.8, 1.2),
+            value="random",
         )
         tensor = TF.erase(tensor, i, j, h, w, v, inplace=False)
         erase_params = {
