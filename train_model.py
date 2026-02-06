@@ -73,6 +73,17 @@ def build_argparser() -> argparse.ArgumentParser:
 
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument(
+        "--centroid_cache_dir",
+        default="",
+        help="Optional disk directory for centroid cache arrays (defaults to system tmp).",
+    )
+    parser.add_argument(
+        "--in_memory_centroid_limit",
+        type=int,
+        default=8,
+        help="Maximum number of slide centroid arrays kept mmap-open in memory.",
+    )
+    parser.add_argument(
         "--log_every_n_batches",
         type=int,
         default=50,
@@ -175,6 +186,8 @@ def main() -> None:
         out_size=args.img_size,
         big_size=args.big_size,
         debug_config=debug_config,
+        centroid_cache_dir=args.centroid_cache_dir or None,
+        in_memory_centroid_limit=args.in_memory_centroid_limit,
     )
 
     world_size = max(1, args.devices)

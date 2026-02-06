@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import logging
 import os
 import random
+import tempfile
 from dataclasses import dataclass
+from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
 from pytorch_lightning import LightningDataModule as PLDataModule
 from torch.utils.data import DataLoader, IterableDataset
 
@@ -395,6 +399,8 @@ class WSICellMoCoIterable(IterableDataset):
         out_size: int = 40,
         big_size: int = 60,
         debug_config: Optional[DebugSampleConfig] = None,
+        centroid_cache_dir: Optional[str] = None,
+        in_memory_centroid_limit: int = 8,
     ) -> None:
         super().__init__()
         assert out_size > 0, "out_size must be positive."
@@ -407,6 +413,16 @@ class WSICellMoCoIterable(IterableDataset):
         self.big_size = big_size
         self.debug_config = debug_config
         self._debug_count = 0
+        self.centroid_cache_dir = Path(
+            centroid_cache_dir
+            if centroid_cache_dir
+            else os.path.join(tempfile.gettempdir(), "myco_v3_centroid_cache")
+        )
+        assert in_memory_centroid_limit > 0, (
+            "in_memory_centroid_limit must be positive."
+        )
+        self.in_memory_centroid_limit = in_memory_centroid_limit
+        self._centroid_mem_cache: OrderedDict[str, np.memmap] = OrderedDict()
 
         from .augment import RotationCrop40, build_lemon_a1_gray_transform
 
@@ -416,6 +432,9 @@ class WSICellMoCoIterable(IterableDataset):
         self.aug = build_lemon_a1_gray_transform(img_size=out_size)
 
         self.centroids: Dict[str, List[Tuple[float, float]]] = {}
+        self._centroid_count_by_slide: Dict[str, int] = {}
+        self._centroid_cache_path_by_slide: Dict[str, str] = {}
+        self.centroid_cache_dir.mkdir(parents=True, exist_ok=True)
         try:
             from tqdm.auto import tqdm
 
@@ -423,11 +442,23 @@ class WSICellMoCoIterable(IterableDataset):
         except Exception:  # noqa: BLE001 - tqdm is optional at runtime.
             entry_iter = entries
         for entry in entry_iter:
-            self.centroids[entry.slide_id] = load_centroids(
-                entry.ann_path, slide_path=entry.wsi_path
-            )
+            centroids = load_centroids(entry.ann_path, slide_path=entry.wsi_path)
+            self.centroids[entry.slide_id] = []
+            self._centroid_count_by_slide[entry.slide_id] = len(centroids)
+            if centroids:
+                cache_path = self._build_centroid_cache_path(entry)
+                centroid_array = np.asarray(centroids, dtype=np.float32)
+                assert centroid_array.ndim == 2 and centroid_array.shape[1] == 2, (
+                    "Centroid cache arrays must have shape [N, 2]."
+                )
+                np.save(cache_path, centroid_array)
+                self._centroid_cache_path_by_slide[entry.slide_id] = cache_path
+                del centroid_array
+            del centroids
         self.valid_entries = [
-            entry for entry in entries if self.centroids.get(entry.slide_id)
+            entry
+            for entry in entries
+            if self._centroid_count_by_slide.get(entry.slide_id, 0) > 0
         ]
         for entry in entries:
             logger.info(
@@ -435,10 +466,10 @@ class WSICellMoCoIterable(IterableDataset):
                 entry.slide_id,
                 entry.wsi_path,
                 entry.ann_path,
-                _summarize_centroids(self.centroids.get(entry.slide_id, [])),
+                f"count={self._centroid_count_by_slide.get(entry.slide_id, 0)} (disk-cached)",
             )
         total_centroids = sum(
-            len(self.centroids.get(entry.slide_id, [])) for entry in entries
+            self._centroid_count_by_slide.get(entry.slide_id, 0) for entry in entries
         )
         logger.info(
             "WSI dataset initialized with %d entries (%d with centroids, %d total centroids).",
@@ -450,6 +481,34 @@ class WSICellMoCoIterable(IterableDataset):
             raise ValueError(
                 "No valid entries with centroids found. Check annotation files and formats."
             )
+
+    def _build_centroid_cache_path(self, entry: SlideEntry) -> str:
+        """Return deterministic disk-cache path for a slide centroid array."""
+        digest = hashlib.sha1(
+            f"{entry.slide_id}|{entry.ann_path}|{entry.wsi_path}".encode("utf-8")
+        ).hexdigest()
+        return str(self.centroid_cache_dir / f"{entry.slide_id}_{digest[:12]}.npy")
+
+    def _get_slide_centroids_array(self, slide_id: str) -> np.memmap:
+        """Load slide centroid array as mmap and keep an LRU of open arrays."""
+        if slide_id in self._centroid_mem_cache:
+            mm = self._centroid_mem_cache.pop(slide_id)
+            self._centroid_mem_cache[slide_id] = mm
+            return mm
+
+        cache_path = self._centroid_cache_path_by_slide.get(slide_id)
+        assert cache_path is not None, (
+            f"Missing centroid cache for slide_id={slide_id}."
+        )
+        centroid_mm = np.load(cache_path, mmap_mode="r")
+        assert centroid_mm.ndim == 2 and centroid_mm.shape[1] == 2, (
+            "Centroid cache mmap must have shape [N, 2]."
+        )
+        self._centroid_mem_cache[slide_id] = centroid_mm
+
+        while len(self._centroid_mem_cache) > self.in_memory_centroid_limit:
+            self._centroid_mem_cache.popitem(last=False)
+        return centroid_mm
 
     def __iter__(self):
         import torch
@@ -479,14 +538,17 @@ class WSICellMoCoIterable(IterableDataset):
             return
         for _ in range(n_yield):
             entry = rng.choice(entries)
-            centroids = self.centroids.get(entry.slide_id, [])
-            assert centroids, (
+            centroid_mm = self._get_slide_centroids_array(entry.slide_id)
+            centroid_count = int(centroid_mm.shape[0])
+            assert centroid_count > 0, (
                 f"Expected non-empty centroids for slide {entry.slide_id}."
             )
-            center = rng.choice(centroids)
+            center_idx = rng.randrange(centroid_count)
+            center = centroid_mm[center_idx]
+            center_xy = (float(center[0]), float(center[1]))
             slide = safe_open_slide(entry.wsi_path)
             try:
-                patch = read_patch(slide, center, self.big_size)
+                patch = read_patch(slide, center_xy, self.big_size)
             finally:
                 slide.close()
 
@@ -523,7 +585,7 @@ class WSICellMoCoIterable(IterableDataset):
                     self.debug_config,
                     self._debug_count,
                     entry,
-                    center,
+                    center_xy,
                     patch,
                     img40,
                     view1,
@@ -548,6 +610,8 @@ class CellDataModule(PLDataModule):
         out_size: int = 40,
         big_size: int = 60,
         debug_config: Optional[DebugSampleConfig] = None,
+        centroid_cache_dir: Optional[str] = None,
+        in_memory_centroid_limit: int = 8,
     ) -> None:
         super().__init__()
         assert isinstance(entries, list), (
@@ -567,6 +631,8 @@ class CellDataModule(PLDataModule):
         self.out_size = out_size
         self.big_size = big_size
         self.debug_config = debug_config
+        self.centroid_cache_dir = centroid_cache_dir
+        self.in_memory_centroid_limit = in_memory_centroid_limit
 
     def train_dataloader(self) -> DataLoader:
         dataset = WSICellMoCoIterable(
@@ -576,6 +642,8 @@ class CellDataModule(PLDataModule):
             out_size=self.out_size,
             big_size=self.big_size,
             debug_config=self.debug_config,
+            centroid_cache_dir=self.centroid_cache_dir,
+            in_memory_centroid_limit=self.in_memory_centroid_limit,
         )
         return DataLoader(
             dataset,
