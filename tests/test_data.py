@@ -211,6 +211,10 @@ def test_wsi_iterable_filters_empty_centroids(monkeypatch) -> None:
     dataset = WSICellMoCoIterable(entries=entries, epoch_length=10, seed=0)
     assert len(dataset.valid_entries) == 1
     assert dataset.valid_entries[0].slide_id == "slide_1"
+    assert dataset._centroid_count_by_slide["slide_1"] == 1
+    assert dataset._centroid_count_by_slide["slide_2"] == 0
+    assert "slide_1" in dataset._centroid_cache_path_by_slide
+    assert "slide_2" not in dataset._centroid_cache_path_by_slide
 
 
 def test_wsi_iterable_raises_without_centroids(monkeypatch) -> None:
