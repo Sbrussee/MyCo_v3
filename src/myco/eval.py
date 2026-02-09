@@ -50,6 +50,7 @@ class ProbeConfig:
     probe_epochs: int = 20
     probe_lr: float = 1e-3
     slides_per_class: int = 150
+    embed_batch_size: int = 256
     seed: int = 0
 
 
@@ -179,6 +180,29 @@ class EvalCallback(pl.Callback):
         return selected
 
     @torch.no_grad()
+    def _encode_patch_batch(
+        self,
+        pl_module: MoCoV3Lit,
+        batch_tensors: List[torch.Tensor],
+        device: torch.device,
+        slide_id: str,
+    ) -> Tuple[List[np.ndarray], List[bool]]:
+        """Encode a tensor batch and return finite embeddings and keep mask."""
+        if not batch_tensors:
+            return [], []
+        x = torch.stack(batch_tensors, dim=0).to(device)
+        z = pl_module.encode(x).detach().cpu().numpy()
+        finite_rows = np.isfinite(z).all(axis=1)
+        if not np.all(finite_rows):
+            logger.warning(
+                "Non-finite embeddings for slide %s; filtered %d/%d rows.",
+                slide_id,
+                int((~finite_rows).sum()),
+                z.shape[0],
+            )
+        return [row for row in z[finite_rows]], finite_rows.tolist()
+
+    @torch.no_grad()
     def _embed_slide(
         self,
         pl_module: MoCoV3Lit,
@@ -187,25 +211,45 @@ class EvalCallback(pl.Callback):
         centroids: List[Tuple[float, float]],
         rng: random.Random,
     ) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Embed sampled patches from a single slide.
+
+        Returns:
+            Tuple[np.ndarray, List[np.ndarray]]:
+                - Embeddings with shape ``(n_valid, proj_dim)`` and dtype ``float32``.
+                - RGB patches used for optional mosaic rendering.
+        """
         assert centroids, f"Expected non-empty centroids for slide {entry.slide_id}."
+        assert self.probe.embed_batch_size > 0, "embed_batch_size must be positive."
         embs: List[np.ndarray] = []
         patches: List[np.ndarray] = []
+        batch_tensors: List[torch.Tensor] = []
+        batch_patches: List[np.ndarray] = []
         slide = safe_open_slide(entry.wsi_path)
         try:
             for _ in range(self.probe.cells_per_slide):
                 center = rng.choice(centroids)
                 patch = read_patch(slide, center, 60)
                 patch = self.rotcrop(patch)
-                x = self.totensor(patch).unsqueeze(0).to(device)
-                z = pl_module.encode(x).squeeze(0).detach().cpu().numpy()
-                if not np.isfinite(z).all():
-                    logger.warning(
-                        "Non-finite embedding for slide %s; skipping this patch.",
-                        entry.slide_id,
-                    )
+                batch_tensors.append(self.totensor(patch))
+                batch_patches.append(np.array(patch))
+
+                if len(batch_tensors) < self.probe.embed_batch_size:
                     continue
-                embs.append(z)
-                patches.append(np.array(patch))
+
+                batch_embs, keep_mask = self._encode_patch_batch(
+                    pl_module, batch_tensors, device, entry.slide_id
+                )
+                embs.extend(batch_embs)
+                patches.extend(p for p, keep in zip(batch_patches, keep_mask) if keep)
+                batch_tensors = []
+                batch_patches = []
+
+            if batch_tensors:
+                batch_embs, keep_mask = self._encode_patch_batch(
+                    pl_module, batch_tensors, device, entry.slide_id
+                )
+                embs.extend(batch_embs)
+                patches.extend(p for p, keep in zip(batch_patches, keep_mask) if keep)
         finally:
             slide.close()
         if not embs:
@@ -375,39 +419,45 @@ class EvalCallback(pl.Callback):
         device = pl_module.device
         rng = random.Random(self.probe.seed + trainer.current_epoch)
 
-        dl = trainer.train_dataloader
-        if isinstance(dl, list):
-            dl = dl[0]
-        batches: List[np.ndarray] = []
-        iterator = iter(dl)
-        for _ in range(10):
-            try:
-                x1, _ = next(iterator)
-            except StopIteration:
-                break
-            x1 = x1.to(device)
-            z = pl_module.encode(x1).detach().cpu().numpy()
-            batches.append(z)
-        if batches:
-            embeddings_np = np.concatenate(batches, axis=0)
-            repr_metrics = repr_metrics_np(embeddings_np)
-        else:
-            logger.warning(
-                "No training batches available for representation metrics at epoch %d.",
-                trainer.current_epoch,
-            )
-            repr_metrics = {
-                "embedding_variance": float("nan"),
-                "mean_embedding_norm": float("nan"),
-            }
+        was_training = pl_module.training
+        pl_module.eval()
+        try:
+            dl = trainer.train_dataloader
+            if isinstance(dl, list):
+                dl = dl[0]
+            batches: List[np.ndarray] = []
+            iterator = iter(dl)
+            for _ in range(10):
+                try:
+                    x1, _ = next(iterator)
+                except StopIteration:
+                    break
+                x1 = x1.to(device)
+                z = pl_module.encode(x1).detach().cpu().numpy()
+                batches.append(z)
+            if batches:
+                embeddings_np = np.concatenate(batches, axis=0)
+                repr_metrics = repr_metrics_np(embeddings_np)
+            else:
+                logger.warning(
+                    "No training batches available for representation metrics at epoch %d.",
+                    trainer.current_epoch,
+                )
+                repr_metrics = {
+                    "embedding_variance": float("nan"),
+                    "mean_embedding_norm": float("nan"),
+                }
 
-        embeds_by_slide, labels, mosaic_patches, mosaic_embeddings = (
-            self._collect_embeddings(pl_module, device, rng)
-        )
-        probe_metrics = self._train_probe(embeds_by_slide, labels, device=device)
-        best_state = self._maybe_save_best(
-            pl_module, trainer.current_epoch, probe_metrics
-        )
+            embeds_by_slide, labels, mosaic_patches, mosaic_embeddings = (
+                self._collect_embeddings(pl_module, device, rng)
+            )
+            probe_metrics = self._train_probe(embeds_by_slide, labels, device=device)
+            best_state = self._maybe_save_best(
+                pl_module, trainer.current_epoch, probe_metrics
+            )
+        finally:
+            if was_training:
+                pl_module.train()
 
         metrics = {**repr_metrics, **probe_metrics}
         trainer.logger.log_metrics(metrics, step=trainer.global_step)
@@ -430,10 +480,11 @@ class EvalCallback(pl.Callback):
                 output_path=mosaic_path,
             )
 
-        print(
-            f"[eval@epoch={trainer.current_epoch}] "
-            f"var={repr_metrics['embedding_variance']:.6f} "
-            f"norm={repr_metrics['mean_embedding_norm']:.3f} "
-            f"auc={probe_metrics.get('probe_auc', float('nan')):.3f} "
-            f"bal_acc={probe_metrics.get('probe_bal_acc', float('nan')):.3f}"
+        logger.info(
+            "[eval@epoch=%d] var=%.6f norm=%.3f auc=%.3f bal_acc=%.3f",
+            trainer.current_epoch,
+            repr_metrics["embedding_variance"],
+            repr_metrics["mean_embedding_norm"],
+            probe_metrics.get("probe_auc", float("nan")),
+            probe_metrics.get("probe_bal_acc", float("nan")),
         )
