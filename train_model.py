@@ -108,6 +108,12 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--probe_epochs", type=int, default=20)
     parser.add_argument("--probe_lr", type=float, default=1e-3)
     parser.add_argument("--probe_slides_per_class", type=int, default=150)
+    parser.add_argument(
+        "--probe_embed_batch_size",
+        type=int,
+        default=256,
+        help="Batch size for slide-level embedding extraction during evaluation.",
+    )
 
     parser.add_argument(
         "--mosaic_method",
@@ -215,6 +221,7 @@ def main() -> None:
         probe_epochs=args.probe_epochs,
         probe_lr=args.probe_lr,
         slides_per_class=args.probe_slides_per_class,
+        embed_batch_size=args.probe_embed_batch_size,
         seed=args.seed,
     )
     mosaic_cfg = MosaicConfig(

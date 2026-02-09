@@ -157,6 +157,7 @@ def main() -> None:
                 probe_epochs=2,
                 probe_lr=1e-3,
                 slides_per_class=3,
+                embed_batch_size=4,
                 seed=args.seed,
             ),
             mosaic=MosaicConfig(
