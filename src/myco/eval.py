@@ -348,33 +348,61 @@ class EvalCallback(pl.Callback):
         for _ in range(self.probe.probe_epochs):
             attn.train()
             clf.train()
+            skipped_train_empty = 0
             for slide_id in train_keys:
                 hidden = torch.from_numpy(embeds[slide_id]).float().to(device)
                 assert hidden.ndim == 2, (
                     f"Expected embeddings to be 2D, got {hidden.shape}."
                 )
+                if hidden.shape[0] == 0:
+                    skipped_train_empty += 1
+                    continue
                 target = torch.tensor(
                     [labels[slide_id]], dtype=torch.float32, device=device
                 )
                 pooled = attn(hidden)
-                logit = clf(pooled).squeeze(0)
+                logit = clf(pooled).view_as(target)
                 loss = F.binary_cross_entropy_with_logits(logit, target)
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 opt.step()
+            if skipped_train_empty > 0:
+                logger.warning(
+                    "Skipped %d empty train slides during probe fitting.",
+                    skipped_train_empty,
+                )
 
         attn.eval()
         clf.eval()
         y_true: List[float] = []
         y_score: List[float] = []
+        skipped_val_empty = 0
         with torch.no_grad():
             for slide_id in val_keys:
                 hidden = torch.from_numpy(embeds[slide_id]).float().to(device)
+                assert hidden.ndim == 2, (
+                    f"Expected embeddings to be 2D, got {hidden.shape}."
+                )
+                if hidden.shape[0] == 0:
+                    skipped_val_empty += 1
+                    continue
                 label = float(labels[slide_id])
                 pooled = attn(hidden)
                 prob = torch.sigmoid(clf(pooled)).item()
                 y_true.append(label)
                 y_score.append(prob)
+
+        if skipped_val_empty > 0:
+            logger.warning(
+                "Skipped %d empty validation slides during probe scoring.",
+                skipped_val_empty,
+            )
+
+        if not y_true:
+            logger.warning(
+                "Probe validation had no non-empty slides; skipping metrics."
+            )
+            return {"probe_auc": float("nan"), "probe_bal_acc": float("nan")}
 
         metrics: Dict[str, float] = {}
         if len(set(y_true)) > 1:
