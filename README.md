@@ -113,8 +113,8 @@ Training uses LEMON a1+gray augmentations:
 - Color jitter
 - Random grayscale
 - Gaussian blur
-- Random erasing
 - Rotation without black corners (60x60 rotate -> center crop to 40x40)
+- Centroids are sampled uniformly across all available cells (centroid-count weighted per slide)
 
 ### Key hyperparameters
 

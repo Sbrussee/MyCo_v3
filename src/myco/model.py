@@ -73,6 +73,7 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
         self.steps_per_epoch = max(1, steps_per_epoch)
         self.warmup_epochs = max(0, warmup_epochs)
         self.total_steps = self.steps_per_epoch * self.total_epochs
+        self.cells_sampled = 0
 
         assert img_size > 0, "img_size must be positive."
         assert big_size > 0, "big_size must be positive."
@@ -208,7 +209,16 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
         loss = 0.5 * (
             F.cross_entropy(logits_12, labels) + F.cross_entropy(logits_21, labels)
         )
+        self.cells_sampled += int(x1.shape[0])
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log(
+            "cells_sampled",
+            float(self.cells_sampled),
+            prog_bar=True,
+            on_step=True,
+            on_epoch=False,
+            logger=False,
+        )
         return loss
 
     @torch.no_grad()

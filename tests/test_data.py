@@ -264,6 +264,41 @@ def test_save_debug_sample(tmp_path: Path) -> None:
     assert (tmp_path / "slide_1_sample_0000_meta.json").exists()
 
 
+def test_save_debug_sample_writes_single_augmented_example(tmp_path: Path) -> None:
+    config = DebugSampleConfig(
+        output_dir=tmp_path,
+        max_samples=1,
+        save_augmentation_examples=True,
+        augmentation_seed=5,
+    )
+    entry = SlideEntry(
+        slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml"
+    )
+    patch = Image.new("RGB", (60, 60), color=(255, 0, 0))
+    base_crop = Image.new("RGB", (40, 40), color=(0, 255, 0))
+    view1 = torch.zeros((3, 40, 40), dtype=torch.float32)
+    view2 = torch.ones((3, 40, 40), dtype=torch.float32)
+
+    _save_debug_sample(
+        config=config,
+        sample_idx=0,
+        entry=entry,
+        center=(10.0, 20.0),
+        patch=patch,
+        base_crop=base_crop,
+        view1=view1,
+        view2=view2,
+        out_size=40,
+        big_size=60,
+    )
+
+    aug_dir = tmp_path / "slide_1_sample_0000_augmentations"
+    assert (aug_dir / "input.png").exists()
+    assert (aug_dir / "augmented.png").exists()
+    assert (aug_dir / "params.json").exists()
+    assert not (aug_dir / "random_erasing.png").exists()
+
+
 def test_pipeline_smoke_with_dummy_slide(tmp_path: Path, monkeypatch) -> None:
     wsi_dir = tmp_path / "wsis"
     ann_dir = tmp_path / "anns"

@@ -15,6 +15,16 @@ import torchvision.transforms.functional as TF
 from .utils import center_crop
 
 
+def _to_tensor_rgb(img: Image.Image) -> torch.Tensor:
+    """Convert a PIL image to CHW float tensor while preserving RGB channel order."""
+    assert isinstance(img, Image.Image), "Expected PIL image input."
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    tensor = TF.to_tensor(img)
+    assert tensor.shape[0] == 3, "Expected RGB image with 3 channels."
+    return tensor
+
+
 class RotationCrop40:
     """Rotate without black corners using a larger crop then center-crop."""
 
@@ -49,8 +59,6 @@ def build_lemon_a1_gray_transform(img_size: int = 40) -> T.Compose:
     )
     cj = T.ColorJitter(brightness=0.6, contrast=0.7, saturation=0.5, hue=0.2)
     blur = T.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))
-    re = T.RandomErasing(p=0.3, scale=(0.1, 0.3), ratio=(0.8, 1.2), value="random")
-
     return T.Compose(
         [
             rrc,
@@ -58,8 +66,7 @@ def build_lemon_a1_gray_transform(img_size: int = 40) -> T.Compose:
             T.RandomApply([cj], p=0.8),
             T.RandomGrayscale(p=0.2),
             blur,
-            T.ToTensor(),
-            re,
+            T.Lambda(_to_tensor_rgb),
         ]
     )
 
@@ -102,45 +109,6 @@ def _sample_gaussian_sigma(sigma_min: float = 0.1, sigma_max: float = 2.0) -> fl
     assert sigma_min > 0.0, "sigma_min must be positive."
     assert sigma_max >= sigma_min, "sigma_max must be >= sigma_min."
     return float(torch.empty(1).uniform_(sigma_min, sigma_max).item())
-
-
-def _sample_random_erasing_params(
-    tensor: torch.Tensor,
-    scale: Tuple[float, float],
-    ratio: Tuple[float, float],
-    value: str | int | float | List[float],
-) -> Tuple[int, int, int, int, torch.Tensor]:
-    """Sample RandomErasing parameters compatible across torchvision versions.
-
-    Parameters
-    ----------
-    tensor : torch.Tensor
-        Input tensor to erase from with shape ``(C, H, W)`` and floating dtype.
-    scale : tuple[float, float]
-        Range of erased area proportion.
-    ratio : tuple[float, float]
-        Range of aspect ratios for the erased region.
-    value : str | int | float | list[float]
-        Erasing fill value. ``"random"`` uses per-pixel random values.
-
-    Returns
-    -------
-    tuple[int, int, int, int, torch.Tensor]
-        ``(i, j, h, w, v)`` erase parameters from
-        :func:`torchvision.transforms.RandomErasing.get_params`.
-    """
-    assert tensor.ndim == 3, (
-        f"Expected tensor shape (C, H, W), got {tuple(tensor.shape)}."
-    )
-
-    erased_value: int | float | List[float] | None
-    erased_value = None if value == "random" else value
-    return T.RandomErasing.get_params(
-        tensor,
-        scale=scale,
-        ratio=ratio,
-        value=erased_value,
-    )
 
 
 def apply_lemon_a1_gray_with_params(
@@ -249,36 +217,8 @@ def apply_lemon_a1_gray_with_params(
     img = TF.gaussian_blur(img, kernel_size=[3, 3], sigma=sigma)
     params.append({"name": "gaussian_blur", "params": {"sigma": float(sigma)}})
 
-    tensor = TF.to_tensor(img)
+    tensor = _to_tensor_rgb(img)
     params.append({"name": "to_tensor", "params": {"dtype": str(tensor.dtype)}})
-
-    erase_p = 0.3
-    do_erase = random.random() < erase_p
-    if do_erase:
-        i, j, h, w, v = _sample_random_erasing_params(
-            tensor,
-            scale=(0.1, 0.3),
-            ratio=(0.8, 1.2),
-            value="random",
-        )
-        tensor = TF.erase(tensor, i, j, h, w, v, inplace=False)
-        params.append(
-            {
-                "name": "random_erasing",
-                "params": {
-                    "p": erase_p,
-                    "applied": True,
-                    "i": int(i),
-                    "j": int(j),
-                    "h": int(h),
-                    "w": int(w),
-                },
-            }
-        )
-    else:
-        params.append(
-            {"name": "random_erasing", "params": {"p": erase_p, "applied": False}}
-        )
 
     return tensor, params
 
@@ -414,7 +354,7 @@ def save_augmentation_examples(
     )
     before_path = after_path
 
-    tensor = TF.to_tensor(img)
+    tensor = _to_tensor_rgb(img)
     tensor_path = output_dir / "to_tensor.png"
     TF.to_pil_image(tensor).save(tensor_path)
     params.append(
@@ -426,37 +366,6 @@ def save_augmentation_examples(
         }
     )
     before_path = tensor_path
-
-    erase_p = 0.3
-    do_erase = random.random() < erase_p
-    if do_erase:
-        i, j, h, w, v = _sample_random_erasing_params(
-            tensor,
-            scale=(0.1, 0.3),
-            ratio=(0.8, 1.2),
-            value="random",
-        )
-        tensor = TF.erase(tensor, i, j, h, w, v, inplace=False)
-        erase_params = {
-            "p": erase_p,
-            "applied": True,
-            "i": int(i),
-            "j": int(j),
-            "h": int(h),
-            "w": int(w),
-        }
-    else:
-        erase_params = {"p": erase_p, "applied": False}
-    erase_path = output_dir / "random_erasing.png"
-    TF.to_pil_image(tensor).save(erase_path)
-    params.append(
-        {
-            "name": "random_erasing",
-            "before": str(before_path),
-            "after": str(erase_path),
-            "params": erase_params,
-        }
-    )
 
     payload = {"seed": seed, "img_size": img_size, "steps": params}
     with open(output_dir / "params.json", "w", encoding="utf-8") as handle:
