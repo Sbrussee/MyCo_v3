@@ -641,6 +641,19 @@ class WSICellMoCoIterable(IterableDataset):
             evicted_slide.close()
         return slide
 
+    def _close_slide_cache(self) -> None:
+        """Close all cached slide handles and clear the worker-local cache."""
+        while self._slide_cache:
+            _, slide = self._slide_cache.popitem(last=False)
+            try:
+                slide.close()
+            except Exception:  # noqa: BLE001 - best-effort cleanup only.
+                continue
+
+    def __del__(self) -> None:
+        """Best-effort cleanup for OpenSlide handles held by this iterable."""
+        self._close_slide_cache()
+
 
 class CellDataModule(PLDataModule):
     """Lightning DataModule for nucleus crop sampling."""
