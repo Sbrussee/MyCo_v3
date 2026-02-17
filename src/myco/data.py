@@ -11,8 +11,9 @@ import random
 import tempfile
 from dataclasses import dataclass
 from collections import OrderedDict
+from bisect import bisect_right
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from pytorch_lightning import LightningDataModule as PLDataModule
@@ -52,7 +53,9 @@ class DebugSampleConfig:
     augmentation_dirname: str = "augmentations"
 
 
-def read_slide_labels(path: str) -> Dict[str, int]:
+def read_slide_labels(
+    path: str, allowed_datasets: Optional[Sequence[str]] = None
+) -> Dict[str, int]:
     """Read slide labels from CSV/JSON into a slide_id -> {0,1} mapping.
 
     Expected columns/keys:
@@ -63,7 +66,19 @@ def read_slide_labels(path: str) -> Dict[str, int]:
     All other labels are ignored.
 
     Supports comma- or semicolon-separated CSV (auto-detected).
+
+    Parameters
+    ----------
+    path : str
+        Path to labels CSV or JSON.
+    allowed_datasets : sequence[str], optional
+        If provided, only rows with ``dataset`` in this allow-list are kept
+        (case-insensitive).
     """
+
+    allowed_dataset_set = None
+    if allowed_datasets is not None:
+        allowed_dataset_set = {str(value).strip().upper() for value in allowed_datasets}
 
     def _map_label(raw: object) -> Optional[int]:
         if raw is None:
@@ -112,6 +127,13 @@ def read_slide_labels(path: str) -> Dict[str, int]:
                 sid_raw = item.get("slide_id") or item.get("slide")
                 label_raw = item.get("label") or item.get("category")
                 mapped = _map_label(label_raw)
+                if allowed_dataset_set is not None:
+                    dataset_raw = item.get("dataset")
+                    if (
+                        dataset_raw is None
+                        or str(dataset_raw).strip().upper() not in allowed_dataset_set
+                    ):
+                        mapped = None
                 if mapped is None or sid_raw is None:
                     continue
                 sid = str(sid_raw).strip()
@@ -144,10 +166,23 @@ def read_slide_labels(path: str) -> Dict[str, int]:
         assert slide_key is not None, "CSV must contain a 'slide_id' or 'slide' column."
         label_key = field_map.get("label") or field_map.get("category")
         assert label_key is not None, "CSV must contain a 'label' or 'category' column."
+        dataset_key = field_map.get("dataset")
+        if allowed_dataset_set is not None:
+            assert dataset_key is not None, (
+                "CSV must contain a 'dataset' column when allowed_datasets is set."
+            )
 
         for row in reader:
             slide_id_raw = row.get(slide_key)
             label_raw = row.get(label_key)
+
+            if allowed_dataset_set is not None and dataset_key is not None:
+                dataset_raw = row.get(dataset_key)
+                if (
+                    dataset_raw is None
+                    or str(dataset_raw).strip().upper() not in allowed_dataset_set
+                ):
+                    continue
 
             mapped = _map_label(label_raw)
             if mapped is None or slide_id_raw is None:
@@ -301,7 +336,7 @@ def _save_debug_sample(
         aug_dir = config.output_dir / f"{sample_prefix}_{config.augmentation_dirname}"
         save_augmentation_examples(
             base_crop,
-            aug_dir,
+            output_dir=aug_dir,
             img_size=out_size,
             seed=aug_seed,
         )
@@ -423,6 +458,8 @@ class WSICellMoCoIterable(IterableDataset):
         )
         self.in_memory_centroid_limit = in_memory_centroid_limit
         self._centroid_mem_cache: OrderedDict[str, np.memmap] = OrderedDict()
+        self._slide_cache: OrderedDict[str, object] = OrderedDict()
+        self._slide_cache_limit = 2
 
         from .augment import RotationCrop40, build_lemon_a1_gray_transform
 
@@ -460,6 +497,12 @@ class WSICellMoCoIterable(IterableDataset):
             for entry in entries
             if self._centroid_count_by_slide.get(entry.slide_id, 0) > 0
         ]
+        self._cum_centroid_counts: List[int] = []
+        running_total = 0
+        for entry in self.valid_entries:
+            running_total += self._centroid_count_by_slide[entry.slide_id]
+            self._cum_centroid_counts.append(running_total)
+        self._total_centroids = running_total
         for entry in entries:
             logger.info(
                 "Centroid summary for slide_id=%s wsi_path=%s ann_path=%s: %s",
@@ -536,21 +579,29 @@ class WSICellMoCoIterable(IterableDataset):
                 num_workers,
             )
             return
+        local_slide_ids = {entry.slide_id for entry in entries}
+        local_cum_counts: List[int] = []
+        local_entries: List[SlideEntry] = []
+        running_total = 0
+        for entry in self.valid_entries:
+            if entry.slide_id not in local_slide_ids:
+                continue
+            running_total += self._centroid_count_by_slide[entry.slide_id]
+            local_cum_counts.append(running_total)
+            local_entries.append(entry)
+        assert local_entries, "Expected at least one local entry for current rank."
+
         for _ in range(n_yield):
-            entry = rng.choice(entries)
+            global_idx = rng.randrange(running_total)
+            slide_pos = bisect_right(local_cum_counts, global_idx)
+            entry = local_entries[slide_pos]
+            start = 0 if slide_pos == 0 else local_cum_counts[slide_pos - 1]
+            center_idx = global_idx - start
             centroid_mm = self._get_slide_centroids_array(entry.slide_id)
-            centroid_count = int(centroid_mm.shape[0])
-            assert centroid_count > 0, (
-                f"Expected non-empty centroids for slide {entry.slide_id}."
-            )
-            center_idx = rng.randrange(centroid_count)
             center = centroid_mm[center_idx]
             center_xy = (float(center[0]), float(center[1]))
-            slide = safe_open_slide(entry.wsi_path)
-            try:
-                patch = read_patch(slide, center_xy, self.big_size)
-            finally:
-                slide.close()
+            slide = self._get_open_slide(entry)
+            patch = read_patch(slide, center_xy, self.big_size)
 
             assert patch.size == (self.big_size, self.big_size), (
                 f"Expected patch size {(self.big_size, self.big_size)}, got {patch.size}."
@@ -595,6 +646,32 @@ class WSICellMoCoIterable(IterableDataset):
                 )
                 self._debug_count += 1
             yield view1, view2
+
+    def _get_open_slide(self, entry: SlideEntry):
+        """Get or open a worker-local OpenSlide handle with a tiny LRU cache."""
+        if entry.slide_id in self._slide_cache:
+            slide = self._slide_cache.pop(entry.slide_id)
+            self._slide_cache[entry.slide_id] = slide
+            return slide
+        slide = safe_open_slide(entry.wsi_path)
+        self._slide_cache[entry.slide_id] = slide
+        while len(self._slide_cache) > self._slide_cache_limit:
+            _, evicted_slide = self._slide_cache.popitem(last=False)
+            evicted_slide.close()
+        return slide
+
+    def _close_slide_cache(self) -> None:
+        """Close all cached slide handles and clear the worker-local cache."""
+        while self._slide_cache:
+            _, slide = self._slide_cache.popitem(last=False)
+            try:
+                slide.close()
+            except Exception:  # noqa: BLE001 - best-effort cleanup only.
+                continue
+
+    def __del__(self) -> None:
+        """Best-effort cleanup for OpenSlide handles held by this iterable."""
+        self._close_slide_cache()
 
 
 class CellDataModule(PLDataModule):
@@ -651,4 +728,5 @@ class CellDataModule(PLDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
             drop_last=True,
+            persistent_workers=self.num_workers > 0,
         )

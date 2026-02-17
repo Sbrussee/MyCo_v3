@@ -33,6 +33,20 @@ def test_read_slide_labels_csv_slide_column(tmp_path: Path) -> None:
     assert labels == {"slide_a": 1, "slide_b": 0}
 
 
+def test_read_slide_labels_csv_filters_allowed_datasets(tmp_path: Path) -> None:
+    csv_path = tmp_path / "labels.csv"
+    csv_path.write_text(
+        "patient;category;dataset;slide\n"
+        "1;BID;LUMC;slide_keep_lumc\n"
+        "2;MF;UMCU;slide_keep_umcu\n"
+        "3;MF;OTHER;slide_drop\n"
+    )
+
+    labels = read_slide_labels(str(csv_path), allowed_datasets=("LUMC", "UMCU"))
+
+    assert labels == {"slide_keep_lumc": 0, "slide_keep_umcu": 1}
+
+
 def test_read_slide_labels_json(tmp_path: Path) -> None:
     json_path = tmp_path / "labels.json"
     json_path.write_text(json.dumps({"slide_1": "MF", "slide_2": 0}))
@@ -262,6 +276,46 @@ def test_save_debug_sample(tmp_path: Path) -> None:
     assert (tmp_path / "slide_1_sample_0000_view1.png").exists()
     assert (tmp_path / "slide_1_sample_0000_view2.png").exists()
     assert (tmp_path / "slide_1_sample_0000_meta.json").exists()
+
+
+def test_save_debug_sample_writes_per_augmentation_examples(tmp_path: Path) -> None:
+    config = DebugSampleConfig(
+        output_dir=tmp_path,
+        max_samples=1,
+        save_augmentation_examples=True,
+        augmentation_seed=5,
+    )
+    entry = SlideEntry(
+        slide_id="slide_1", wsi_path="slide_1.svs", ann_path="slide_1.xml"
+    )
+    patch = Image.new("RGB", (60, 60), color=(255, 0, 0))
+    base_crop = Image.new("RGB", (40, 40), color=(0, 255, 0))
+    view1 = torch.zeros((3, 40, 40), dtype=torch.float32)
+    view2 = torch.ones((3, 40, 40), dtype=torch.float32)
+
+    _save_debug_sample(
+        config=config,
+        sample_idx=0,
+        entry=entry,
+        center=(10.0, 20.0),
+        patch=patch,
+        base_crop=base_crop,
+        view1=view1,
+        view2=view2,
+        out_size=40,
+        big_size=60,
+    )
+
+    aug_dir = tmp_path / "slide_1_sample_0000_augmentations"
+    assert (aug_dir / "input.png").exists()
+    assert (aug_dir / "random_resized_crop.png").exists()
+    assert (aug_dir / "random_horizontal_flip.png").exists()
+    assert (aug_dir / "color_jitter.png").exists()
+    assert (aug_dir / "random_grayscale.png").exists()
+    assert (aug_dir / "gaussian_blur.png").exists()
+    assert (aug_dir / "to_tensor.png").exists()
+    assert (aug_dir / "params.json").exists()
+    assert not (aug_dir / "random_erasing.png").exists()
 
 
 def test_pipeline_smoke_with_dummy_slide(tmp_path: Path, monkeypatch) -> None:

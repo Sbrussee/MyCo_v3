@@ -440,6 +440,30 @@ class EvalCallback(pl.Callback):
             )
         return self._best_state
 
+    def _to_float_metrics(self, metrics: Dict[str, object]) -> Dict[str, float]:
+        """Convert metric payload values to plain floats where possible."""
+        output: Dict[str, float] = {}
+        for key, value in metrics.items():
+            if isinstance(value, torch.Tensor):
+                if value.numel() == 1:
+                    output[key] = float(value.detach().cpu().item())
+            elif isinstance(value, (int, float, np.floating)):
+                output[key] = float(value)
+        return output
+
+    def _save_epoch_metrics(self, epoch: int, metrics: Dict[str, float]) -> None:
+        """Persist epoch-level metrics to JSON and append-only JSONL files."""
+        payload = {"epoch": int(epoch), **metrics}
+        metrics_dir = os.path.join(self.output_dir, "epoch_metrics")
+        os.makedirs(metrics_dir, exist_ok=True)
+        per_epoch_path = os.path.join(metrics_dir, f"epoch_{epoch:03d}.json")
+        with open(per_epoch_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+
+        history_path = os.path.join(self.output_dir, "epoch_metrics_history.jsonl")
+        with open(history_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload) + "\n")
+
     def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: MoCoV3Lit) -> None:
         if trainer.global_rank != 0:
             return
@@ -488,12 +512,13 @@ class EvalCallback(pl.Callback):
                 pl_module.train()
 
         metrics = {**repr_metrics, **probe_metrics}
-        trainer.logger.log_metrics(metrics, step=trainer.global_step)
+        callback_metrics = self._to_float_metrics(dict(trainer.callback_metrics))
+        epoch_payload = {**callback_metrics, **metrics}
         if best_state is not None:
-            trainer.logger.log_metrics(
-                {"best_probe_bal_acc": best_state.metric_value},
-                step=trainer.global_step,
-            )
+            epoch_payload["best_probe_bal_acc"] = float(best_state.metric_value)
+
+        trainer.logger.log_metrics(epoch_payload, step=trainer.global_step)
+        self._save_epoch_metrics(trainer.current_epoch, epoch_payload)
 
         if mosaic_embeddings.shape[0] > 0:
             mosaic_path = os.path.join(
