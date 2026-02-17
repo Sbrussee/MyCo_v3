@@ -174,8 +174,26 @@ def main() -> None:
     logger.info("Training configuration: %s", vars(args))
 
     entries = build_entries_from_dirs(args.wsi_dir, args.ann_dir)
-    slide_labels = read_slide_labels(args.slide_labels)
-    logger.info("Loaded %d slide labels from %s.", len(slide_labels), args.slide_labels)
+    allowed_datasets = ("LUMC", "UMCU")
+    slide_labels = read_slide_labels(
+        args.slide_labels, allowed_datasets=allowed_datasets
+    )
+    logger.info(
+        "Loaded %d slide labels from %s after dataset filter %s.",
+        len(slide_labels),
+        args.slide_labels,
+        allowed_datasets,
+    )
+    before_filter = len(entries)
+    entries = [entry for entry in entries if entry.slide_id in slide_labels]
+    logger.info(
+        "Filtered entries by labels/dataset: %d -> %d slides.",
+        before_filter,
+        len(entries),
+    )
+    assert entries, (
+        "No matched training entries remain after applying label/dataset filters."
+    )
     debug_dir = args.debug_dir or os.path.join(args.outdir, "debug_samples")
     debug_config = None
     if args.debug_samples > 0:

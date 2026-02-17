@@ -33,6 +33,20 @@ def test_read_slide_labels_csv_slide_column(tmp_path: Path) -> None:
     assert labels == {"slide_a": 1, "slide_b": 0}
 
 
+def test_read_slide_labels_csv_filters_allowed_datasets(tmp_path: Path) -> None:
+    csv_path = tmp_path / "labels.csv"
+    csv_path.write_text(
+        "patient;category;dataset;slide\n"
+        "1;BID;LUMC;slide_keep_lumc\n"
+        "2;MF;UMCU;slide_keep_umcu\n"
+        "3;MF;OTHER;slide_drop\n"
+    )
+
+    labels = read_slide_labels(str(csv_path), allowed_datasets=("LUMC", "UMCU"))
+
+    assert labels == {"slide_keep_lumc": 0, "slide_keep_umcu": 1}
+
+
 def test_read_slide_labels_json(tmp_path: Path) -> None:
     json_path = tmp_path / "labels.json"
     json_path.write_text(json.dumps({"slide_1": "MF", "slide_2": 0}))

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from collections import OrderedDict
 from bisect import bisect_right
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from pytorch_lightning import LightningDataModule as PLDataModule
@@ -53,7 +53,9 @@ class DebugSampleConfig:
     augmentation_dirname: str = "augmentations"
 
 
-def read_slide_labels(path: str) -> Dict[str, int]:
+def read_slide_labels(
+    path: str, allowed_datasets: Optional[Sequence[str]] = None
+) -> Dict[str, int]:
     """Read slide labels from CSV/JSON into a slide_id -> {0,1} mapping.
 
     Expected columns/keys:
@@ -64,7 +66,19 @@ def read_slide_labels(path: str) -> Dict[str, int]:
     All other labels are ignored.
 
     Supports comma- or semicolon-separated CSV (auto-detected).
+
+    Parameters
+    ----------
+    path : str
+        Path to labels CSV or JSON.
+    allowed_datasets : sequence[str], optional
+        If provided, only rows with ``dataset`` in this allow-list are kept
+        (case-insensitive).
     """
+
+    allowed_dataset_set = None
+    if allowed_datasets is not None:
+        allowed_dataset_set = {str(value).strip().upper() for value in allowed_datasets}
 
     def _map_label(raw: object) -> Optional[int]:
         if raw is None:
@@ -113,6 +127,13 @@ def read_slide_labels(path: str) -> Dict[str, int]:
                 sid_raw = item.get("slide_id") or item.get("slide")
                 label_raw = item.get("label") or item.get("category")
                 mapped = _map_label(label_raw)
+                if allowed_dataset_set is not None:
+                    dataset_raw = item.get("dataset")
+                    if (
+                        dataset_raw is None
+                        or str(dataset_raw).strip().upper() not in allowed_dataset_set
+                    ):
+                        mapped = None
                 if mapped is None or sid_raw is None:
                     continue
                 sid = str(sid_raw).strip()
@@ -145,10 +166,23 @@ def read_slide_labels(path: str) -> Dict[str, int]:
         assert slide_key is not None, "CSV must contain a 'slide_id' or 'slide' column."
         label_key = field_map.get("label") or field_map.get("category")
         assert label_key is not None, "CSV must contain a 'label' or 'category' column."
+        dataset_key = field_map.get("dataset")
+        if allowed_dataset_set is not None:
+            assert dataset_key is not None, (
+                "CSV must contain a 'dataset' column when allowed_datasets is set."
+            )
 
         for row in reader:
             slide_id_raw = row.get(slide_key)
             label_raw = row.get(label_key)
+
+            if allowed_dataset_set is not None and dataset_key is not None:
+                dataset_raw = row.get(dataset_key)
+                if (
+                    dataset_raw is None
+                    or str(dataset_raw).strip().upper() not in allowed_dataset_set
+                ):
+                    continue
 
             mapped = _map_label(label_raw)
             if mapped is None or slide_id_raw is None:

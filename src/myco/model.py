@@ -199,18 +199,20 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
             float(batch_idx) / float(self.steps_per_epoch)
         )
 
-    def _update_learning_rate(self, batch_idx: int) -> None:
+    def _update_learning_rate(self, batch_idx: int) -> float:
         """Update optimizer learning rates to match the MoCo v3 schedule."""
         optimizer = self.optimizers()
         if optimizer is None:
-            return
+            return float(self.hparams.lr)
         if isinstance(optimizer, (list, tuple)):
             if not optimizer:
-                return
+                return float(self.hparams.lr)
             optimizer = optimizer[0]
         lr_scale = self._lr_schedule(self._epoch_progress(batch_idx))
+        current_lr = self.hparams.lr * lr_scale
         for param_group in optimizer.param_groups:
-            param_group["lr"] = self.hparams.lr * lr_scale
+            param_group["lr"] = current_lr
+        return float(current_lr)
 
     @torch.no_grad()
     def _concat_all_gather(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -275,7 +277,7 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
         assert x1.shape[-2:] == (self.img_size, self.img_size), (
             f"Expected x1 spatial size {(self.img_size, self.img_size)}, got {x1.shape[-2:]}."
         )
-        self._update_learning_rate(batch_idx)
+        current_lr = self._update_learning_rate(batch_idx)
         momentum = self._momentum_schedule(self._epoch_progress(batch_idx))
         with torch.no_grad():
             self._momentum_update(momentum)
@@ -286,9 +288,17 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
             k1 = self.k_proj(self.k_enc(x1))
             k2 = self.k_proj(self.k_enc(x2))
 
-        loss = self._contrastive_loss(q1, k2) + self._contrastive_loss(q2, k1)
+        loss_12 = self._contrastive_loss(q1, k2)
+        loss_21 = self._contrastive_loss(q2, k1)
+        loss = loss_12 + loss_21
         self.cells_sampled += int(x1.shape[0])
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
+        self.log("train_loss_12", loss_12, on_step=True, on_epoch=True, logger=True)
+        self.log("train_loss_21", loss_21, on_step=True, on_epoch=True, logger=True)
+        self.log("lr", float(current_lr), on_step=True, on_epoch=False, logger=True)
+        self.log(
+            "moco_momentum", float(momentum), on_step=True, on_epoch=False, logger=True
+        )
         self.log(
             "cells_sampled",
             float(self.cells_sampled),
