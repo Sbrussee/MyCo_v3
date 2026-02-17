@@ -264,7 +264,7 @@ def test_save_debug_sample(tmp_path: Path) -> None:
     assert (tmp_path / "slide_1_sample_0000_meta.json").exists()
 
 
-def test_save_debug_sample_writes_single_augmented_example(tmp_path: Path) -> None:
+def test_save_debug_sample_writes_per_augmentation_examples(tmp_path: Path) -> None:
     config = DebugSampleConfig(
         output_dir=tmp_path,
         max_samples=1,
@@ -294,7 +294,12 @@ def test_save_debug_sample_writes_single_augmented_example(tmp_path: Path) -> No
 
     aug_dir = tmp_path / "slide_1_sample_0000_augmentations"
     assert (aug_dir / "input.png").exists()
-    assert (aug_dir / "augmented.png").exists()
+    assert (aug_dir / "random_resized_crop.png").exists()
+    assert (aug_dir / "random_horizontal_flip.png").exists()
+    assert (aug_dir / "color_jitter.png").exists()
+    assert (aug_dir / "random_grayscale.png").exists()
+    assert (aug_dir / "gaussian_blur.png").exists()
+    assert (aug_dir / "to_tensor.png").exists()
     assert (aug_dir / "params.json").exists()
     assert not (aug_dir / "random_erasing.png").exists()
 

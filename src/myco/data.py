@@ -296,31 +296,16 @@ def _save_debug_sample(
     aug_dir = None
     aug_seed = None
     if config.save_augmentation_examples:
-        from torchvision.transforms.functional import to_pil_image as to_pil
-
-        from .augment import apply_lemon_a1_gray_with_params
+        from .augment import save_augmentation_examples
 
         aug_seed = config.augmentation_seed + sample_idx
         aug_dir = config.output_dir / f"{sample_prefix}_{config.augmentation_dirname}"
-        aug_dir.mkdir(parents=True, exist_ok=True)
-        aug_tensor, aug_params = apply_lemon_a1_gray_with_params(
+        save_augmentation_examples(
             base_crop,
+            output_dir=aug_dir,
             img_size=out_size,
             seed=aug_seed,
         )
-        base_crop.save(aug_dir / "input.png")
-        to_pil(aug_tensor.detach().cpu().clamp(0, 1)).save(aug_dir / "augmented.png")
-        with open(aug_dir / "params.json", "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "seed": aug_seed,
-                    "img_size": out_size,
-                    "single_augmentation": True,
-                    "steps": aug_params,
-                },
-                handle,
-                indent=2,
-            )
 
     metadata = {
         "slide_id": entry.slide_id,
