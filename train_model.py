@@ -183,6 +183,70 @@ def resolve_resume_checkpoint(outdir: str) -> str | None:
     return None
 
 
+def is_resume_checkpoint_compatible(model: MoCoV3Lit, checkpoint_path: str) -> bool:
+    """Return whether a checkpoint can be strictly restored for ``model``.
+
+    Parameters
+    ----------
+    model : MoCoV3Lit
+        Initialized model instance that will receive restored weights.
+    checkpoint_path : str
+        Path to a Lightning checkpoint containing ``state_dict``.
+
+    Returns
+    -------
+    bool
+        ``True`` when checkpoint and current model state are shape/key compatible
+        after legacy-key normalization, otherwise ``False``.
+    """
+    logger = logging.getLogger(__name__)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    if not isinstance(checkpoint, dict):
+        logger.warning(
+            "Checkpoint %s has invalid payload type %s; starting from scratch.",
+            checkpoint_path,
+            type(checkpoint).__name__,
+        )
+        return False
+
+    model.on_load_checkpoint(checkpoint)
+    state_dict = checkpoint.get("state_dict")
+    if not isinstance(state_dict, dict):
+        logger.warning(
+            "Checkpoint %s is missing a valid state_dict; starting from scratch.",
+            checkpoint_path,
+        )
+        return False
+
+    checkpoint_tensor_state = {
+        key: value
+        for key, value in state_dict.items()
+        if isinstance(value, torch.Tensor)
+    }
+    model_state = model.state_dict()
+
+    missing_keys = sorted(set(model_state) - set(checkpoint_tensor_state))
+    unexpected_keys = sorted(set(checkpoint_tensor_state) - set(model_state))
+    mismatched_keys = sorted(
+        key
+        for key in set(model_state).intersection(checkpoint_tensor_state)
+        if tuple(model_state[key].shape) != tuple(checkpoint_tensor_state[key].shape)
+    )
+
+    if missing_keys or unexpected_keys or mismatched_keys:
+        logger.warning(
+            "Checkpoint %s is incompatible; starting from scratch "
+            "(missing=%d unexpected=%d mismatched_shapes=%d).",
+            checkpoint_path,
+            len(missing_keys),
+            len(unexpected_keys),
+            len(mismatched_keys),
+        )
+        return False
+
+    return True
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -298,9 +362,10 @@ def main() -> None:
     )
 
     resume_ckpt_path = resolve_resume_checkpoint(args.outdir)
-    if resume_ckpt_path:
+    if resume_ckpt_path and is_resume_checkpoint_compatible(model, resume_ckpt_path):
         logger.info("Resuming from checkpoint: %s", resume_ckpt_path)
     else:
+        resume_ckpt_path = None
         logger.info(
             "No existing checkpoint found under %s; starting fresh.", args.outdir
         )
