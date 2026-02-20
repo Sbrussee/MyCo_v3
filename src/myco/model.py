@@ -176,6 +176,85 @@ class MoCoV3Lit(pl.LightningModule, EmbeddingEncoder):
             weight_decay=self.hparams.weight_decay,
         )
 
+    @staticmethod
+    def _remap_legacy_mlp_keys(state_dict: Dict[str, torch.Tensor]) -> None:
+        """Remap legacy projector key names to the current ``MLPHead`` layout.
+
+        Parameters
+        ----------
+        state_dict : Dict[str, torch.Tensor]
+            Checkpoint state dict keyed by module names.
+
+        Notes
+        -----
+        Older checkpoints stored projector modules as ``fc1`` / ``bn1`` / ``fc2``.
+        The current implementation uses an ``nn.Sequential`` named ``net``.
+        Only compatible tensor mappings are translated.
+        """
+        legacy_to_new = {
+            "q_proj.fc1": "q_proj.net.0",
+            "q_proj.bn1": "q_proj.net.1",
+            "q_proj.fc2": "q_proj.net.3",
+            "k_proj.fc1": "k_proj.net.0",
+            "k_proj.bn1": "k_proj.net.1",
+            "k_proj.fc2": "k_proj.net.3",
+        }
+        mapped_items: Dict[str, torch.Tensor] = {}
+        for key, value in state_dict.items():
+            if "." not in key:
+                continue
+            prefix, suffix = key.rsplit(".", 1)
+            new_prefix = legacy_to_new.get(prefix)
+            if new_prefix is None:
+                continue
+            mapped_items[f"{new_prefix}.{suffix}"] = value
+        state_dict.update(mapped_items)
+
+    def _drop_incompatible_state_dict_keys(
+        self, state_dict: Dict[str, torch.Tensor]
+    ) -> list[str]:
+        """Drop keys whose shapes are incompatible with this model.
+
+        Parameters
+        ----------
+        state_dict : Dict[str, torch.Tensor]
+            Candidate checkpoint state dict.
+
+        Returns
+        -------
+        list[str]
+            Names of keys removed from the checkpoint payload.
+        """
+        current_state = self.state_dict()
+        dropped_keys: list[str] = []
+        for key in list(state_dict.keys()):
+            if key not in current_state:
+                continue
+            if tuple(state_dict[key].shape) != tuple(current_state[key].shape):
+                dropped_keys.append(key)
+                del state_dict[key]
+        return dropped_keys
+
+    def on_load_checkpoint(self, checkpoint: Dict[str, object]) -> None:
+        """Normalize legacy checkpoint payloads before Lightning restores weights."""
+        state_dict = checkpoint.get("state_dict")
+        if not isinstance(state_dict, dict):
+            return
+        tensor_state = {
+            key: value
+            for key, value in state_dict.items()
+            if isinstance(value, torch.Tensor)
+        }
+        self._remap_legacy_mlp_keys(tensor_state)
+        dropped = self._drop_incompatible_state_dict_keys(tensor_state)
+        checkpoint["state_dict"] = tensor_state
+        if dropped:
+            logger.warning(
+                "Dropped %d incompatible checkpoint tensors during restore: %s",
+                len(dropped),
+                ", ".join(sorted(dropped)),
+            )
+
     def _lr_schedule(self, epoch_progress: float) -> float:
         """Cosine learning-rate schedule with linear warmup (MoCo v3)."""
         if self.total_epochs <= 1:
