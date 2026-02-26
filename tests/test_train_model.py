@@ -15,7 +15,6 @@ sys.path.insert(0, str(ROOT))
 
 import train_model  # noqa: E402
 from myco.callbacks import BatchMetricsLogger  # noqa: E402
-from myco.model import MoCoV3Lit  # noqa: E402
 
 
 def test_build_logger_uses_csv(tmp_path):
@@ -40,39 +39,20 @@ def test_build_callbacks_includes_logging_and_checkpointing(tmp_path):
     assert BatchMetricsLogger in callback_types
 
 
-def test_is_resume_checkpoint_compatible_accepts_matching_state_dict(
-    tmp_path,
-) -> None:
-    ckpt_path = tmp_path / "match.ckpt"
-    state_dict = {"q_proj.net.0.weight": train_model.torch.ones((2, 2))}
-    train_model.torch.save({"state_dict": state_dict}, ckpt_path)
+def test_resolve_resume_checkpoint_prefers_last_checkpoint(tmp_path) -> None:
+    moco_ckpt = tmp_path / "moco-001.ckpt"
+    moco_ckpt.write_text("placeholder")
+    last_ckpt = tmp_path / "last.ckpt"
+    last_ckpt.write_text("placeholder")
 
-    model = object.__new__(MoCoV3Lit)
-    model.on_load_checkpoint = lambda checkpoint: None
-    model.state_dict = lambda: {"q_proj.net.0.weight": train_model.torch.zeros((2, 2))}
-
-    assert train_model.is_resume_checkpoint_compatible(model, str(ckpt_path))
+    resolved = train_model.resolve_resume_checkpoint(str(tmp_path))
+    assert resolved == str(last_ckpt)
 
 
-def test_is_resume_checkpoint_compatible_rejects_missing_or_unexpected_keys(
-    tmp_path,
-) -> None:
-    ckpt_path = tmp_path / "mismatch.ckpt"
-    state_dict = {"q_proj.fc1.weight": train_model.torch.ones((2, 2))}
-    train_model.torch.save({"state_dict": state_dict}, ckpt_path)
+def test_resolve_resume_checkpoint_falls_back_to_latest_epoch(tmp_path) -> None:
+    (tmp_path / "moco-001.ckpt").write_text("placeholder")
+    latest_ckpt = tmp_path / "moco-010.ckpt"
+    latest_ckpt.write_text("placeholder")
 
-    model = object.__new__(MoCoV3Lit)
-    model.state_dict = lambda: {
-        "q_proj.net.0.weight": train_model.torch.zeros((2, 2)),
-        "predictor.net.0.weight": train_model.torch.zeros((2, 2)),
-    }
-
-    def _normalize(checkpoint: dict[str, object]) -> None:
-        checkpoint["state_dict"] = {
-            "q_proj.net.0.weight": train_model.torch.ones((2, 2)),
-            "extra.weight": train_model.torch.ones((2, 2)),
-        }
-
-    model.on_load_checkpoint = _normalize
-
-    assert not train_model.is_resume_checkpoint_compatible(model, str(ckpt_path))
+    resolved = train_model.resolve_resume_checkpoint(str(tmp_path))
+    assert resolved == str(latest_ckpt)
