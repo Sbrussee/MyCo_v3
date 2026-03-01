@@ -39,9 +39,23 @@ def test_build_callbacks_includes_logging_and_checkpointing(tmp_path):
     assert BatchMetricsLogger in callback_types
 
 
-def test_resolve_resume_checkpoint_prefers_last_checkpoint(tmp_path) -> None:
+def test_resolve_resume_checkpoint_prefers_latest_versioned_last_checkpoint(
+    tmp_path,
+) -> None:
     moco_ckpt = tmp_path / "moco-001.ckpt"
     moco_ckpt.write_text("placeholder")
+    last_ckpt = tmp_path / "last.ckpt"
+    last_ckpt.write_text("placeholder")
+    (tmp_path / "last-v4.ckpt").write_text("placeholder")
+    last_v5_ckpt = tmp_path / "last-v5.ckpt"
+    last_v5_ckpt.write_text("placeholder")
+
+    resolved = train_model.resolve_resume_checkpoint(str(tmp_path))
+    assert resolved == str(last_v5_ckpt)
+
+
+def test_resolve_resume_checkpoint_falls_back_to_unversioned_last(tmp_path) -> None:
+    (tmp_path / "moco-001.ckpt").write_text("placeholder")
     last_ckpt = tmp_path / "last.ckpt"
     last_ckpt.write_text("placeholder")
 
