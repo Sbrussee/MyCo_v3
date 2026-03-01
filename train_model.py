@@ -162,8 +162,10 @@ def build_callbacks(
 def resolve_resume_checkpoint(outdir: str) -> str | None:
     """Resolve a checkpoint path to resume trainer state from, if available.
 
-    The function prefers ``last.ckpt`` (Lightning's rolling checkpoint) and
-    falls back to the highest epoch checkpoint matching ``moco-*.ckpt``.
+    The function prefers the highest versioned rolling checkpoint matching
+    ``last-v*.ckpt`` (for manual snapshots), then ``last.ckpt`` (Lightning's
+    rolling checkpoint), and finally falls back to the highest epoch
+    checkpoint matching ``moco-*.ckpt``.
 
     Args:
         outdir: Training output directory containing Lightning checkpoints.
@@ -172,6 +174,11 @@ def resolve_resume_checkpoint(outdir: str) -> str | None:
         Path to a checkpoint file if one exists; otherwise ``None``.
     """
     output_path = Path(outdir)
+
+    versioned_last_checkpoints = sorted(output_path.glob("last-v*.ckpt"))
+    if versioned_last_checkpoints:
+        return str(versioned_last_checkpoints[-1])
+
     last_checkpoint = output_path / "last.ckpt"
     if last_checkpoint.is_file():
         return str(last_checkpoint)
