@@ -190,6 +190,26 @@ def resolve_resume_checkpoint(outdir: str) -> str | None:
     return None
 
 
+def resolve_sampling_seed(base_seed: int, ckpt_path: str | None) -> int:
+    """Return a deterministic sampling seed that advances when resuming.
+
+    The resumed checkpoint's ``global_step`` is folded into the sampling seed so
+    data sampling does not restart from the beginning after an interrupted run.
+
+    Args:
+        base_seed: User-provided base random seed.
+        ckpt_path: Optional checkpoint path selected for trainer resume.
+
+    Returns:
+        Integer seed to pass to the data pipeline.
+    """
+    if ckpt_path is None:
+        return int(base_seed)
+    checkpoint_payload = torch.load(ckpt_path, map_location="cpu")
+    resume_step = int(checkpoint_payload.get("global_step", 0))
+    return int(base_seed) + resume_step
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -232,12 +252,20 @@ def main() -> None:
             output_dir=Path(debug_dir), max_samples=args.debug_samples
         )
 
+    resume_ckpt_path = resolve_resume_checkpoint(args.outdir)
+    if resume_ckpt_path:
+        logger.info("Resuming from checkpoint: %s", resume_ckpt_path)
+    else:
+        logger.info("No checkpoint found under %s; starting fresh.", args.outdir)
+    sampling_seed = resolve_sampling_seed(args.seed, resume_ckpt_path)
+    logger.info("Data sampling seed: %d (base=%d).", sampling_seed, args.seed)
+
     datamodule = CellDataModule(
         entries,
         epoch_length=args.epoch_length,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        seed=args.seed,
+        seed=sampling_seed,
         out_size=args.img_size,
         big_size=args.big_size,
         debug_config=debug_config,
@@ -303,12 +331,6 @@ def main() -> None:
         enable_checkpointing=True,
         logger=trainer_logger,
     )
-
-    resume_ckpt_path = resolve_resume_checkpoint(args.outdir)
-    if resume_ckpt_path:
-        logger.info("Resuming from checkpoint: %s", resume_ckpt_path)
-    else:
-        logger.info("No checkpoint found under %s; starting fresh.", args.outdir)
 
     trainer.fit(model, datamodule=datamodule, ckpt_path=resume_ckpt_path)
 

@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 
 import pytorch_lightning as pl
+import torch
 from pytorch_lightning.callbacks import (
     DeviceStatsMonitor,
     LearningRateMonitor,
@@ -70,3 +71,16 @@ def test_resolve_resume_checkpoint_falls_back_to_latest_epoch(tmp_path) -> None:
 
     resolved = train_model.resolve_resume_checkpoint(str(tmp_path))
     assert resolved == str(latest_ckpt)
+
+
+def test_resolve_sampling_seed_returns_base_seed_without_checkpoint() -> None:
+    seed = train_model.resolve_sampling_seed(base_seed=7, ckpt_path=None)
+    assert seed == 7
+
+
+def test_resolve_sampling_seed_offsets_with_checkpoint_global_step(tmp_path) -> None:
+    ckpt_path = tmp_path / "last.ckpt"
+    torch.save({"global_step": 12}, ckpt_path)
+
+    seed = train_model.resolve_sampling_seed(base_seed=7, ckpt_path=str(ckpt_path))
+    assert seed == 19
